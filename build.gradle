@@ -1,0 +1,91 @@
+plugins {
+    id 'java'
+    id 'checkstyle'
+}
+
+group 'com.osrsjournal'
+version '1.0.0'
+
+repositories {
+    mavenLocal()
+    maven {
+        url = 'https://repo.runelite.net'
+    }
+    mavenCentral()
+}
+
+// Keep in sync with the RuneLite version you are building against.
+// Check https://github.com/runelite/runelite/releases for the latest.
+def runeliteVersion = '1.12.0'
+
+dependencies {
+    // RuneLite client — compileOnly because it's provided at runtime by the launcher
+    compileOnly group: 'net.runelite', name: 'client', version: runeliteVersion
+
+    // Lombok — annotation processor only, not bundled
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+
+    // NOTE: OkHttp and Gson are provided by the RuneLite runtime.
+    // Do NOT add them as implementation/compile dependencies — that would
+    // bundle duplicate classes and break the plugin.
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(11)
+    }
+}
+
+def journalRoot = file("${projectDir}/..")
+def generatedResources = layout.buildDirectory.dir('generated-resources')
+
+sourceSets {
+    main {
+        resources {
+            srcDir generatedResources
+        }
+    }
+}
+
+// Local web journal is only used in self-hosted mode (hostedMode=false).
+// Plugin Hub builds stay slim by default; opt in with: gradlew jar -PbundleWebapp
+tasks.register('copyJournalWebapp', Copy) {
+    onlyIf { project.hasProperty('bundleWebapp') }
+    from("${journalRoot}/osrs-journal.html")
+    from("${journalRoot}/quest-reqs-data.json")
+    from("${journalRoot}/quest-qp-data.json")
+    from("${journalRoot}/assets") {
+        into 'assets'
+        // Only what the HTML references — skip the large branding logos
+        include 'favicon-32.png', 'logo-nav.png'
+    }
+    into generatedResources.map { it.dir('osrsjournal/web') }
+}
+
+// Remove stale webapp resources from previous -PbundleWebapp builds
+tasks.register('cleanJournalWebapp', Delete) {
+    onlyIf { !project.hasProperty('bundleWebapp') }
+    delete generatedResources.map { it.dir('osrsjournal/web') }
+}
+copyJournalWebapp.configure { mustRunAfter cleanJournalWebapp }
+
+processResources.dependsOn copyJournalWebapp, cleanJournalWebapp
+processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+compileJava {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xlint:unchecked'
+}
+
+// Plugin Hub build task — produces the jar the hub expects
+jar {
+    manifest {
+        attributes(
+            'Plugin-Version': project.version,
+            'Plugin-Id': 'osrs-journal'
+        )
+    }
+}
