@@ -21,15 +21,15 @@ class OsrsJournalPanel extends PluginPanel
 {
     private final JEditorPane summaryPane = new JEditorPane();
     private final JLabel statusLabel = new JLabel("Log in to view your journal.");
-    private final JournalWebServer webServer;
+    private final JournalBrowser journalBrowser;
     private final ScheduledExecutorService executor;
     private JButton openFullButton;
 
     @Inject
-    OsrsJournalPanel(JournalWebServer webServer, ScheduledExecutorService executor)
+    OsrsJournalPanel(JournalBrowser journalBrowser, ScheduledExecutorService executor)
     {
         super();
-        this.webServer = webServer;
+        this.journalBrowser = journalBrowser;
         this.executor = executor;
     }
 
@@ -109,7 +109,7 @@ class OsrsJournalPanel extends PluginPanel
         statusLabel.setText("Opening journal...");
         executor.execute(() ->
         {
-            String status = webServer.openInBrowser(rsn);
+            String status = journalBrowser.openInBrowser(rsn);
             SwingUtilities.invokeLater(() ->
             {
                 openFullButton.setEnabled(true);
@@ -171,7 +171,7 @@ class OsrsJournalPanel extends PluginPanel
             }
             sb.append("</ul>");
         }
-        if (s.isHostedMode() && s.getPairCode() != null && !s.getPairCode().isEmpty() && !s.isAccountLinked())
+        if (s.getPairCode() != null && !s.getPairCode().isEmpty() && !s.isAccountLinked())
         {
             sb.append("<hr/>");
             sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Link account</b></p>");
@@ -182,7 +182,7 @@ class OsrsJournalPanel extends PluginPanel
                 + "2. Enter this code under <b>Link character</b><br/>"
                 + "Code expires in ~10 minutes.</p>");
         }
-        else if (s.isHostedMode() && s.isAccountLinked())
+        else if (s.isAccountLinked())
         {
             sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked — journal syncs to the cloud.</p>");
         }

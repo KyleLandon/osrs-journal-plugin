@@ -40,24 +40,6 @@ public final class JournalConstants
         return API_BASE_URL;
     }
 
-    static String resolveProjectUrl(String configuredHosted, String configuredSelfHosted, boolean hostedMode)
-    {
-        if (hostedMode)
-        {
-            String base = resolveApiBase(configuredHosted);
-            if (base.endsWith("/functions/v1"))
-            {
-                return base.substring(0, base.length() - "/functions/v1".length());
-            }
-            return SUPABASE_PROJECT_URL;
-        }
-        if (configuredSelfHosted != null && !configuredSelfHosted.trim().isEmpty())
-        {
-            return configuredSelfHosted.trim();
-        }
-        return SUPABASE_PROJECT_URL;
-    }
-
     private static String normalizeApiBase(String url)
     {
         String trimmed = url;

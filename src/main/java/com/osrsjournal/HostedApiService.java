@@ -32,11 +32,6 @@ public class HostedApiService
     @Inject
     private OsrsJournalConfig config;
 
-    boolean isConfigured()
-    {
-        return config.hostedMode();
-    }
-
     String resolveApiBase()
     {
         return JournalConstants.resolveApiBase(config.apiBaseUrl());

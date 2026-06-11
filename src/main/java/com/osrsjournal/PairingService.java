@@ -38,12 +38,9 @@ class PairingService
         {
             return lastState;
         }
-
-        String token = syncTokenStore.getToken(rsn);
-        if (token != null)
-        {
-            return new PairingState(rsn, null, token, true, 0);
-        }
+        // No live state from pair-init this session — having a stored token
+        // doesn't prove the account was claimed on the website, so report
+        // nothing rather than a false "linked".
         return null;
     }
 

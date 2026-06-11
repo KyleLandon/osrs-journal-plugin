@@ -45,7 +45,7 @@ import net.runelite.client.util.ImageUtil;
  * OSRS Journal Plugin
  *
  * <p>Listens for in-game events and syncs the following to the OSRS Journal cloud
- * (journal.osrsjournal.com), or to a self-hosted backend in advanced setups:
+ * (journal.osrsjournal.com):
  * <ul>
  *   <li>All 23 skill levels + XP ({@link StatChanged})</li>
  *   <li>All quest states ({@link GameTick} — polled every ~1 min)</li>
@@ -56,7 +56,7 @@ import net.runelite.client.util.ImageUtil;
  * <p><strong>Threading model:</strong>
  * All {@code @Subscribe} handlers run on the <em>client thread</em>.
  * Data is collected there, then dispatched to the {@link ScheduledExecutorService}
- * for off-thread network I/O via {@link SupabaseService}. The client thread is
+ * for off-thread network I/O via {@link HostedApiService}. The client thread is
  * never blocked by network activity.
  */
 @Slf4j
@@ -102,9 +102,6 @@ public class OsrsJournalPlugin extends Plugin
     @Inject
     private ClientToolbar clientToolbar;
 
-    @Inject
-    private JournalWebServer webServer;
-
     private OsrsJournalPanel panel;
     private NavigationButton navButton;
     private boolean openedSidebarOnce;
@@ -126,7 +123,7 @@ public class OsrsJournalPlugin extends Plugin
     public void configure(Binder binder)
     {
         binder.bind(OsrsJournalPanel.class);
-        binder.bind(JournalWebServer.class);
+        binder.bind(JournalBrowser.class);
     }
 
     @Override
@@ -134,7 +131,7 @@ public class OsrsJournalPlugin extends Plugin
     {
         panel = injector.getInstance(OsrsJournalPanel.class);
         panel.init();
-        panel.setRefreshListener(this::refreshPanel);
+        panel.setRefreshListener(this::manualRefresh);
 
         BufferedImage icon = ImageUtil.loadImageResource(getClass(), "journal_icon.png");
         if (icon == null)
@@ -166,7 +163,6 @@ public class OsrsJournalPlugin extends Plugin
         lastQuestStates.clear();
         currentRsn = null;
         clientToolbar.removeNavigation(navButton);
-        webServer.stop();
         panel = null;
         navButton = null;
         log.debug("OSRS Journal stopped");
@@ -363,10 +359,7 @@ public class OsrsJournalPlugin extends Plugin
 
             executor.execute(() ->
             {
-                if (journalSyncService.isHostedMode())
-                {
-                    journalSyncService.ensurePairing(rsn);
-                }
+                journalSyncService.ensurePairing(rsn);
 
                 boolean ok = journalSyncService.syncLogin(
                     rsn, playerRecord, skillRecords, questRecords, equipRecords);
@@ -600,6 +593,27 @@ public class OsrsJournalPlugin extends Plugin
         }
     }
 
+    /**
+     * Sidebar Refresh button: retries pairing if there's no code yet (e.g. the
+     * backend was unreachable at login), then redraws the panel.
+     */
+    private void manualRefresh()
+    {
+        final String rsn = currentRsn;
+        if (rsn == null)
+        {
+            refreshPanel();
+            return;
+        }
+        executor.execute(() ->
+        {
+            // pair-init is idempotent: reuses the sync token and reports the
+            // server-side linked state, issuing a fresh code if unclaimed.
+            journalSyncService.ensurePairing(rsn);
+            refreshPanel();
+        });
+    }
+
     /** Reads live client data on the client thread, then updates the sidebar on the EDT. */
     private void refreshPanel()
     {
@@ -618,7 +632,6 @@ public class OsrsJournalPlugin extends Plugin
                 snapshot = JournalSnapshot.fromClient(
                     client,
                     config.syncEnabled(),
-                    journalSyncService.isHostedMode(),
                     pairing
                 );
             }

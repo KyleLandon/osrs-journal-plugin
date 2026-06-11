@@ -61,6 +61,4 @@ is linked.
 
 ## Developers
 
-Build and self-hosting docs live in [SETUP.md](SETUP.md). The default build is
-slim (no bundled webapp); build with `gradlew jar -PbundleWebapp` for the
-self-hosted local journal.
+Build and development docs live in [SETUP.md](SETUP.md).

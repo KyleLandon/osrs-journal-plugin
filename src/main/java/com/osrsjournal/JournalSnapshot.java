@@ -18,7 +18,6 @@ class JournalSnapshot
     private final List<SkillRow> skills;
     private final List<String> recentQuests;
     private final boolean syncEnabled;
-    private final boolean hostedMode;
     private final String pairCode;
     private final boolean accountLinked;
 
@@ -31,7 +30,6 @@ class JournalSnapshot
         List<SkillRow> skills,
         List<String> recentQuests,
         boolean syncEnabled,
-        boolean hostedMode,
         String pairCode,
         boolean accountLinked
     )
@@ -44,7 +42,6 @@ class JournalSnapshot
         this.skills = skills;
         this.recentQuests = recentQuests;
         this.syncEnabled = syncEnabled;
-        this.hostedMode = hostedMode;
         this.pairCode = pairCode;
         this.accountLinked = accountLinked;
     }
@@ -55,19 +52,15 @@ class JournalSnapshot
         {
             return "Sync paused — enable in plugin settings.";
         }
-        if (hostedMode && pairCode != null && !pairCode.isEmpty() && !accountLinked)
+        if (pairCode != null && !pairCode.isEmpty() && !accountLinked)
         {
             return "Link your account: sign in at journal.osrsjournal.com and enter the code below.";
         }
-        if (hostedMode && accountLinked)
+        if (accountLinked)
         {
             return "Linked · syncing to OSRS Journal cloud.";
         }
-        if (hostedMode)
-        {
-            return "Syncing to OSRS Journal cloud.";
-        }
-        return "Syncing to Supabase · open full journal for details.";
+        return "Waiting for pairing — click Refresh if no code appears.";
     }
 
     static class SkillRow
@@ -95,7 +88,6 @@ class JournalSnapshot
     static JournalSnapshot fromClient(
         net.runelite.api.Client client,
         boolean syncEnabled,
-        boolean hostedMode,
         PairingState pairing
     )
     {
@@ -142,7 +134,6 @@ class JournalSnapshot
             skills,
             recent,
             syncEnabled,
-            hostedMode,
             pairCode,
             linked
         );
