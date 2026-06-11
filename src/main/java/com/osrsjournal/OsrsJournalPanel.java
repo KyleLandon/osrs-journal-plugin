@@ -1,7 +1,6 @@
 package com.osrsjournal;
 
 import java.awt.BorderLayout;
-import java.awt.Dimension;
 import java.awt.GridLayout;
 import java.awt.event.ActionEvent;
 import java.util.concurrent.ScheduledExecutorService;
@@ -58,7 +57,6 @@ class OsrsJournalPanel extends PluginPanel
         summaryPane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
         summaryPane.setBackground(ColorScheme.DARKER_GRAY_COLOR);
         summaryPane.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
-        summaryPane.setPreferredSize(new Dimension(PANEL_WIDTH - 12, 280));
         summaryPane.setText(buildHtml(null));
 
         openFullButton = new JButton("Open full journal");
@@ -149,6 +147,24 @@ class OsrsJournalPanel extends PluginPanel
         sb.append("<p style='color:#94a3b8'>Combat ").append(s.getCombatLevel())
             .append(" · QP ").append(s.getQuestPoints())
             .append(" · Total ").append(s.getTotalLevel()).append("</p>");
+
+        // Pairing call-to-action goes first — it must never be pushed out of view.
+        if (s.getPairCode() != null && !s.getPairCode().isEmpty() && !s.isAccountLinked())
+        {
+            sb.append("<hr/>");
+            sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Link account</b></p>");
+            sb.append("<p style='color:#f1f5f9;font-size:18px;letter-spacing:2px'><b>")
+                .append(escape(s.getPairCode())).append("</b></p>");
+            sb.append("<p style='color:#64748b;font-size:11px'>1. Sign in at "
+                + "<a href='" + JournalConstants.WEB_APP_URL + "' style='color:#60a5fa'>journal.osrsjournal.com</a><br/>"
+                + "2. Enter this code under <b>Link character</b><br/>"
+                + "Code expires in ~10 minutes.</p>");
+        }
+        else if (s.isAccountLinked())
+        {
+            sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked — journal syncs to the cloud.</p>");
+        }
+
         sb.append("<hr/>");
         sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Skills</b></p>");
         sb.append("<table width='100%' cellpadding='2' cellspacing='0'>");
@@ -170,21 +186,6 @@ class OsrsJournalPanel extends PluginPanel
                 sb.append("<li style='color:#cbd5e1;font-size:11px'>").append(escape(quest)).append("</li>");
             }
             sb.append("</ul>");
-        }
-        if (s.getPairCode() != null && !s.getPairCode().isEmpty() && !s.isAccountLinked())
-        {
-            sb.append("<hr/>");
-            sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Link account</b></p>");
-            sb.append("<p style='color:#f1f5f9;font-size:18px;letter-spacing:2px'><b>")
-                .append(escape(s.getPairCode())).append("</b></p>");
-            sb.append("<p style='color:#64748b;font-size:11px'>1. Sign in at "
-                + "<a href='" + JournalConstants.WEB_APP_URL + "' style='color:#60a5fa'>journal.osrsjournal.com</a><br/>"
-                + "2. Enter this code under <b>Link character</b><br/>"
-                + "Code expires in ~10 minutes.</p>");
-        }
-        else if (s.isAccountLinked())
-        {
-            sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked — journal syncs to the cloud.</p>");
         }
         sb.append("<p style='color:#64748b;font-size:11px'>Full quest reqs, gear, and export live in the browser journal.</p>");
         return htmlWrap(sb.toString());
