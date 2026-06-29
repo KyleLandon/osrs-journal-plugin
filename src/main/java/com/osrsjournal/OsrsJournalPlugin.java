@@ -408,12 +408,18 @@ public class OsrsJournalPlugin extends Plugin
 
     private void syncSkills(String rsn, List<Map<String, Object>> records)
     {
-        journalSyncService.syncSkills(rsn, records);
+        if (!journalSyncService.syncSkills(rsn, records))
+        {
+            log.warn("OSRS Journal: skill sync failed for '{}'", rsn);
+        }
     }
 
     private void syncQuests(String rsn, List<Map<String, Object>> records)
     {
-        journalSyncService.syncQuests(rsn, records);
+        if (!journalSyncService.syncQuests(rsn, records))
+        {
+            log.warn("OSRS Journal: quest sync failed for '{}'", rsn);
+        }
     }
 
     private void syncEquipment(String rsn, List<Map<String, Object>> records)
@@ -632,6 +638,7 @@ public class OsrsJournalPlugin extends Plugin
                 snapshot = JournalSnapshot.fromClient(
                     client,
                     config.syncEnabled(),
+                    config.syncBank(),
                     pairing
                 );
             }

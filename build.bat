@@ -1,6 +1,12 @@
 @echo off
 setlocal
-set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-11.0.31.11-hotspot"
+if not defined JAVA_HOME (
+  for /d %%D in ("C:\Program Files\Eclipse Adoptium\jdk-11*") do set "JAVA_HOME=%%~D"
+)
+if not defined JAVA_HOME (
+  echo ERROR: Java 11 JDK not found. Install Eclipse Temurin 11 or set JAVA_HOME.
+  exit /b 1
+)
 set "PATH=%JAVA_HOME%\bin;%PATH%"
 set "SIDELOAD=%USERPROFILE%\.runelite\sideloaded-plugins"
 set "NEW_JAR=%SIDELOAD%\osrs-journal-plugin-1.0.0.jar"

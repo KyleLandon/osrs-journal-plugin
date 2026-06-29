@@ -8,8 +8,6 @@ import net.runelite.client.config.ConfigSection;
 @ConfigGroup("osrsjournal")
 public interface OsrsJournalConfig extends Config
 {
-    // ── Sync Options ──────────────────────────────────────────────────────────
-
     @ConfigSection(
         name = "Sync Options",
         description = "Control what data is synced and when",
@@ -20,7 +18,7 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "syncEnabled",
         name = "Enable Sync",
-        description = "Master switch — turn off to pause all syncing",
+        description = "Master switch — turn off to pause all syncing to journal.osrsjournal.com",
         section = syncSection,
         position = 1
     )
@@ -32,19 +30,21 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "syncBank",
         name = "Sync Bank",
-        description = "Sync bank contents each time the bank is opened",
+        description = "When enabled, sends your full bank to journal.osrsjournal.com each time you open the bank. "
+            + "Off by default — only you can see bank data when signed in on the website.",
         section = syncSection,
         position = 2
     )
     default boolean syncBank()
     {
-        return true;
+        return false;
     }
 
     @ConfigItem(
         keyName = "publicProfile",
         name = "Public Profile",
-        description = "Skills and quests visible to others on journal.osrsjournal.com (like Wise Old Man). Bank and gear stay private.",
+        description = "Skills and quests visible to others on journal.osrsjournal.com (like Wise Old Man). "
+            + "Bank and worn gear stay private.",
         section = syncSection,
         position = 3
     )
@@ -56,8 +56,7 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "skillDebounceSeconds",
         name = "Skill Debounce (s)",
-        description = "Seconds to wait after the last StatChanged event before syncing skills. "
-            + "Prevents dozens of requests firing at once on login.",
+        description = "Seconds to wait after the last XP gain before syncing skills",
         section = syncSection,
         position = 4
     )
@@ -66,11 +65,9 @@ public interface OsrsJournalConfig extends Config
         return 3;
     }
 
-    // ── Advanced (custom deployments only) ────────────────────────────────────
-
     @ConfigSection(
         name = "Advanced",
-        description = "Overrides for custom deployments — leave blank for journal.osrsjournal.com",
+        description = "Self-hosted deployments only — leave blank for journal.osrsjournal.com",
         position = 5,
         closedByDefault = true
     )
@@ -89,24 +86,11 @@ public interface OsrsJournalConfig extends Config
     }
 
     @ConfigItem(
-        keyName = "hostedAnonKey",
-        name = "Web key override",
-        description = "Leave blank — only needed for custom deployments",
-        section = advancedSection,
-        position = 7,
-        secret = true
-    )
-    default String hostedAnonKey()
-    {
-        return "";
-    }
-
-    @ConfigItem(
         keyName = "pluginClientId",
         name = "Client ID",
-        description = "Leave blank for normal use",
+        description = "Only if your backend requires X-Plugin-Client-Id",
         section = advancedSection,
-        position = 8
+        position = 7
     )
     default String pluginClientId()
     {

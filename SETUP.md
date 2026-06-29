@@ -65,8 +65,9 @@ See the [RuneLite Jagex Accounts wiki](https://github.com/runelite/runelite/wiki
 
 ```bat
 export-credentials.bat          rem one-time, if you have a Jagex Account
-run-dev.exe                   rem launches dev RuneLite (builds only if jar missing)
+run-dev.exe                   rem builds plugin + launches dev RuneLite (builds client only if jar missing)
 run-dev.exe --rebuild         rem force full client rebuild, then launch
+run-dev.exe --skip-plugin-build rem skip plugin rebuild when iterating on client only
 osrs-journal-plugin\build.bat rem rebuild plugin after code changes
 ```
 
@@ -107,7 +108,7 @@ If no code appears (e.g. the backend was unreachable at login), click **Refresh*
 | Setting | Default |
 |---|---|
 | Enable Sync | ✅ |
-| Sync Bank | ✅ (bank data leaves your client; turn off if unwanted) |
+| Sync Bank | ❌ off by default (opt-in in plugin settings) |
 | Public Profile | ✅ — skills/quests visible like Wise Old Man; bank and gear always private |
 
 The **Advanced** overrides (API override, Web key override, Client ID) should stay

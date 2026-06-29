@@ -1,6 +1,5 @@
 plugins {
     id 'java'
-    id 'checkstyle'
 }
 
 group 'com.osrsjournal'
@@ -14,21 +13,13 @@ repositories {
     mavenCentral()
 }
 
-// Keep in sync with the RuneLite version you are building against.
-// Check https://github.com/runelite/runelite/releases for the latest.
-def runeliteVersion = '1.12.0'
+def runeliteVersion = 'latest.release'
 
 dependencies {
-    // RuneLite client — compileOnly because it's provided at runtime by the launcher
     compileOnly group: 'net.runelite', name: 'client', version: runeliteVersion
 
-    // Lombok — annotation processor only, not bundled
     compileOnly 'org.projectlombok:lombok:1.18.30'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
-
-    // NOTE: OkHttp and Gson are provided by the RuneLite runtime.
-    // Do NOT add them as implementation/compile dependencies — that would
-    // bundle duplicate classes and break the plugin.
 }
 
 java {
@@ -42,7 +33,6 @@ compileJava {
     options.compilerArgs << '-Xlint:unchecked'
 }
 
-// Plugin Hub build task — produces the jar the hub expects
 jar {
     manifest {
         attributes(

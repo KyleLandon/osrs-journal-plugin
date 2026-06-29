@@ -18,6 +18,7 @@ class JournalSnapshot
     private final List<SkillRow> skills;
     private final List<String> recentQuests;
     private final boolean syncEnabled;
+    private final boolean bankSyncEnabled;
     private final String pairCode;
     private final boolean accountLinked;
 
@@ -30,6 +31,7 @@ class JournalSnapshot
         List<SkillRow> skills,
         List<String> recentQuests,
         boolean syncEnabled,
+        boolean bankSyncEnabled,
         String pairCode,
         boolean accountLinked
     )
@@ -42,6 +44,7 @@ class JournalSnapshot
         this.skills = skills;
         this.recentQuests = recentQuests;
         this.syncEnabled = syncEnabled;
+        this.bankSyncEnabled = bankSyncEnabled;
         this.pairCode = pairCode;
         this.accountLinked = accountLinked;
     }
@@ -88,6 +91,7 @@ class JournalSnapshot
     static JournalSnapshot fromClient(
         net.runelite.api.Client client,
         boolean syncEnabled,
+        boolean bankSyncEnabled,
         PairingState pairing
     )
     {
@@ -134,6 +138,7 @@ class JournalSnapshot
             skills,
             recent,
             syncEnabled,
+            bankSyncEnabled,
             pairCode,
             linked
         );

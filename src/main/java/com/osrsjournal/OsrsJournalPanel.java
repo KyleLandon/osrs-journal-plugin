@@ -162,7 +162,16 @@ class OsrsJournalPanel extends PluginPanel
         }
         else if (s.isAccountLinked())
         {
-            sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked — journal syncs to the cloud.</p>");
+            sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked — stats and quests sync automatically.</p>");
+        }
+
+        if (s.isSyncEnabled())
+        {
+            sb.append("<p style='color:#64748b;font-size:11px'>Skills and quests sync while you play. Bank sync is ")
+                .append(s.isBankSyncEnabled() ? "<span style='color:#fbbf24'>on</span>" : "off")
+                .append(" — change in plugin settings. <a href='")
+                .append(JournalConstants.PRIVACY_URL)
+                .append("' style='color:#60a5fa'>Privacy</a></p>");
         }
 
         sb.append("<hr/>");
