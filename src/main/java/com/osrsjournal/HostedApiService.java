@@ -108,12 +108,12 @@ public class HostedApiService
         }
     }
 
-    boolean sync(String rsn, String syncToken, SyncPayload payload)
+    SyncResult sync(String rsn, String syncToken, SyncPayload payload)
     {
         String base = resolveApiBase();
         if (syncToken == null || syncToken.isEmpty())
         {
-            return false;
+            return SyncResult.failed(false);
         }
 
         payload.setRsn(rsn);
@@ -130,15 +130,72 @@ public class HostedApiService
             if (!response.isSuccessful())
             {
                 log.warn("hosted sync failed for '{}': HTTP {}", rsn, response.code());
-                return false;
+                // 401/403 means the stored token is stale (e.g. rotated server-side)
+                return SyncResult.failed(response.code() == 401 || response.code() == 403);
             }
-            log.debug("hosted sync ok for '{}'", rsn);
-            return true;
+
+            boolean claimed = false;
+            if (response.body() != null)
+            {
+                try
+                {
+                    JsonObject json = gson.fromJson(response.body().string(), JsonObject.class);
+                    claimed = json != null && json.has("claimed") && json.get("claimed").getAsBoolean();
+                }
+                catch (RuntimeException e)
+                {
+                    log.debug("could not parse sync response for '{}'", rsn, e);
+                }
+            }
+            log.debug("hosted sync ok for '{}' (claimed={})", rsn, claimed);
+            return SyncResult.ok(claimed);
         }
         catch (IOException e)
         {
             log.error("hosted sync error for '{}'", rsn, e);
-            return false;
+            return SyncResult.failed(false);
+        }
+    }
+
+    /** Outcome of a sync call, including the server-reported pairing state. */
+    static final class SyncResult
+    {
+        private final boolean success;
+        private final boolean claimed;
+        private final boolean authFailed;
+
+        private SyncResult(boolean success, boolean claimed, boolean authFailed)
+        {
+            this.success = success;
+            this.claimed = claimed;
+            this.authFailed = authFailed;
+        }
+
+        static SyncResult ok(boolean claimed)
+        {
+            return new SyncResult(true, claimed, false);
+        }
+
+        static SyncResult failed(boolean authFailed)
+        {
+            return new SyncResult(false, false, authFailed);
+        }
+
+        boolean isSuccess()
+        {
+            return success;
+        }
+
+        /** True when the server confirmed this character is linked to a website account. */
+        boolean isClaimed()
+        {
+            return claimed;
+        }
+
+        /** True when the request was rejected because the sync token is invalid/stale. */
+        boolean isAuthFailed()
+        {
+            return authFailed;
         }
     }
 

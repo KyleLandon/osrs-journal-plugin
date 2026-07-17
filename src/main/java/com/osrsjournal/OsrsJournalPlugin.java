@@ -63,7 +63,7 @@ import net.runelite.client.util.ImageUtil;
 @PluginDescriptor(
     name = "OSRS Journal",
     configName = "osrsjournal",
-    description = "Syncs your character to journal.osrsjournal.com — stats, quests, gear and bank with a sidebar summary",
+    description = "Syncs your character to journal.osrsjournal.com — stats, quests and gear with a sidebar summary. Bank sync is opt-in.",
     tags = {"sync", "cloud", "stats", "quests", "journal", "tracker"}
 )
 public class OsrsJournalPlugin extends Plugin
@@ -115,7 +115,9 @@ public class OsrsJournalPlugin extends Plugin
     private final Map<Quest, QuestState> lastQuestStates = new EnumMap<>(Quest.class);
 
     private int ticksSinceQuestPoll = 0;
-    private String currentRsn = null;
+
+    /** Written on the client thread, read from executor threads. */
+    private volatile String currentRsn = null;
 
     // ── Plugin lifecycle ───────────────────────────────────────────────────────
 
@@ -151,9 +153,8 @@ public class OsrsJournalPlugin extends Plugin
             .build();
 
         clientToolbar.addNavigation(navButton);
-        SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
         refreshPanel();
-        log.info("OSRS Journal sidebar panel registered");
+        log.debug("OSRS Journal sidebar panel registered");
     }
 
     @Override
@@ -191,11 +192,6 @@ public class OsrsJournalPlugin extends Plugin
             case LOGGED_IN:
                 // Give the client a moment to fully load the player
                 executor.schedule(this::performLoginSync, 2, TimeUnit.SECONDS);
-                if (!openedSidebarOnce && navButton != null)
-                {
-                    openedSidebarOnce = true;
-                    SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
-                }
                 break;
             case LOGIN_SCREEN:
             case HOPPING:
@@ -359,17 +355,58 @@ public class OsrsJournalPlugin extends Plugin
 
             executor.execute(() ->
             {
-                journalSyncService.ensurePairing(rsn);
-
-                boolean ok = journalSyncService.syncLogin(
-                    rsn, playerRecord, skillRecords, questRecords, equipRecords);
-                if (!ok)
+                // Only hit pair-init when there's no stored token — for already
+                // linked accounts the sync call alone confirms the link state.
+                if (journalSyncService.getSyncToken(rsn) == null)
                 {
-                    log.warn("OSRS Journal: login sync partially failed for '{}'", rsn);
+                    journalSyncService.ensurePairing(rsn);
                 }
+
+                HostedApiService.SyncResult result = journalSyncService.syncLogin(
+                    rsn, playerRecord, skillRecords, questRecords, equipRecords);
+
+                if (!result.isSuccess() && result.isAuthFailed())
+                {
+                    // Stored token is stale (e.g. rotated server-side) — re-pair and retry once
+                    log.info("OSRS Journal: sync token stale for '{}', re-pairing", rsn);
+                    journalSyncService.ensurePairing(rsn);
+                    result = journalSyncService.syncLogin(
+                        rsn, playerRecord, skillRecords, questRecords, equipRecords);
+                }
+                else if (result.isSuccess() && !result.isClaimed())
+                {
+                    // Data synced but the character isn't linked to a website
+                    // account yet — fetch a pairing code for the sidebar.
+                    journalSyncService.ensurePairing(rsn);
+                }
+
+                if (!result.isSuccess())
+                {
+                    log.warn("OSRS Journal: login sync failed for '{}'", rsn);
+                }
+
+                maybeOpenSidebarForPairing(rsn);
                 refreshPanel();
             });
         });
+    }
+
+    /**
+     * Opens the sidebar once per session, and only when the character still
+     * needs pairing — linked users aren't interrupted.
+     */
+    private void maybeOpenSidebarForPairing(String rsn)
+    {
+        if (openedSidebarOnce || navButton == null)
+        {
+            return;
+        }
+        PairingState state = journalSyncService.getPairingState(rsn);
+        if (state == null || !state.isLinked())
+        {
+            openedSidebarOnce = true;
+            SwingUtilities.invokeLater(() -> clientToolbar.openPanel(navButton));
+        }
     }
 
     /**
@@ -544,7 +581,8 @@ public class OsrsJournalPlugin extends Plugin
         List<Map<String, Object>> records = new ArrayList<>();
         for (Item item : container.getItems())
         {
-            if (item == null || item.getId() == -1)
+            // quantity <= 0 filters bank placeholders — no reason to sync those
+            if (item == null || item.getId() == -1 || item.getQuantity() <= 0)
             {
                 continue;
             }
@@ -615,7 +653,12 @@ public class OsrsJournalPlugin extends Plugin
         {
             // pair-init is idempotent: reuses the sync token and reports the
             // server-side linked state, issuing a fresh code if unclaimed.
-            journalSyncService.ensurePairing(rsn);
+            // Skip it entirely once the account is confirmed linked.
+            PairingState state = journalSyncService.getPairingState(rsn);
+            if (state == null || !state.isLinked())
+            {
+                journalSyncService.ensurePairing(rsn);
+            }
             refreshPanel();
         });
     }

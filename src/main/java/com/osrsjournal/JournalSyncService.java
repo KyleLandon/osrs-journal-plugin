@@ -42,7 +42,7 @@ class JournalSyncService
         return syncTokenStore.getToken(rsn);
     }
 
-    boolean syncLogin(
+    HostedApiService.SyncResult syncLogin(
         String rsn,
         List<Map<String, Object>> playerRecord,
         List<Map<String, Object>> skillRecords,
@@ -54,7 +54,7 @@ class JournalSyncService
         if (token == null)
         {
             log.warn("No sync token for '{}' — sync skipped", rsn);
-            return false;
+            return HostedApiService.SyncResult.failed(true);
         }
 
         // Note: profile_public is intentionally NOT sent here — the website's
@@ -68,7 +68,12 @@ class JournalSyncService
             .equipment(equipRecords, true)
             .touchLastSynced(true);
 
-        return hostedApiService.sync(rsn, token, payload);
+        HostedApiService.SyncResult result = hostedApiService.sync(rsn, token, payload);
+        if (result.isSuccess())
+        {
+            pairingService.updateLinkedState(rsn, token, result.isClaimed());
+        }
+        return result;
     }
 
     boolean syncSkills(String rsn, List<Map<String, Object>> records)
@@ -106,6 +111,6 @@ class JournalSyncService
         {
             return false;
         }
-        return hostedApiService.sync(rsn, token, payload);
+        return hostedApiService.sync(rsn, token, payload).isSuccess();
     }
 }

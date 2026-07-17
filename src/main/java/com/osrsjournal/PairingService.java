@@ -44,6 +44,19 @@ class PairingService
         return null;
     }
 
+    /**
+     * Updates the linked state from a sync response ({@code claimed} field) —
+     * lets the sidebar show "Account linked" without a pair-init round trip.
+     * Never downgrades a state that is currently showing a pairing code.
+     */
+    void updateLinkedState(String rsn, String syncToken, boolean linked)
+    {
+        if (linked)
+        {
+            lastState = new PairingState(rsn, null, syncToken, true, 0);
+        }
+    }
+
     void clearState()
     {
         lastState = null;
