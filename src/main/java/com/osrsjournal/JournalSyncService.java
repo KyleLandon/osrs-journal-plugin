@@ -53,7 +53,9 @@ class JournalSyncService
         List<Map<String, Object>> playerRecord,
         List<Map<String, Object>> skillRecords,
         List<Map<String, Object>> questRecords,
-        List<Map<String, Object>> equipRecords
+        List<Map<String, Object>> equipRecords,
+        List<Map<String, Object>> diaryRecords,
+        List<Map<String, Object>> combatAchievementRecords
     )
     {
         String token = syncTokenStore.getToken(rsn);
@@ -72,6 +74,8 @@ class JournalSyncService
             .skills(skillRecords)
             .quests(questRecords)
             .equipment(equipRecords, true)
+            .diaries(diaryRecords)
+            .combatAchievements(combatAchievementRecords)
             .touchLastSynced(true);
 
         HostedApiService.SyncResult result = hostedApiService.sync(rsn, token, payload);

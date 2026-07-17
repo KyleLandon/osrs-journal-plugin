@@ -24,6 +24,7 @@ import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
 import net.runelite.api.VarPlayer;
+import net.runelite.api.Varbits;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
@@ -47,7 +48,8 @@ import net.runelite.client.util.ImageUtil;
  * <p>Listens for in-game events and syncs the following to the OSRS Journal cloud
  * (journal.osrsjournal.com):
  * <ul>
- *   <li>All 23 skill levels + XP ({@link StatChanged})</li>
+ *   <li>All skill levels + XP ({@link StatChanged})</li>
+ *   <li>Achievement diary tier completion + combat achievement tier counts</li>
  *   <li>All quest states ({@link GameTick} — polled every ~1 min)</li>
  *   <li>Worn equipment ({@link ItemContainerChanged} for {@code InventoryID.EQUIPMENT})</li>
  *   <li>Bank contents ({@link ItemContainerChanged} for {@code InventoryID.BANK})</li>
@@ -352,6 +354,8 @@ public class OsrsJournalPlugin extends Plugin
             List<Map<String, Object>> skillRecords  = buildSkillRecords(rsn);
             List<Map<String, Object>> questRecords  = buildAllQuestRecords(rsn);
             List<Map<String, Object>> equipRecords  = buildEquipmentRecords(rsn);
+            List<Map<String, Object>> diaryRecords  = buildDiaryRecords(rsn);
+            List<Map<String, Object>> caRecords     = buildCombatAchievementRecords(rsn);
 
             executor.execute(() ->
             {
@@ -363,7 +367,7 @@ public class OsrsJournalPlugin extends Plugin
                 }
 
                 HostedApiService.SyncResult result = journalSyncService.syncLogin(
-                    rsn, playerRecord, skillRecords, questRecords, equipRecords);
+                    rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords);
 
                 if (!result.isSuccess() && result.isAuthFailed())
                 {
@@ -371,7 +375,7 @@ public class OsrsJournalPlugin extends Plugin
                     log.info("OSRS Journal: sync token stale for '{}', re-pairing", rsn);
                     journalSyncService.ensurePairing(rsn);
                     result = journalSyncService.syncLogin(
-                        rsn, playerRecord, skillRecords, questRecords, equipRecords);
+                        rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords);
                 }
                 else if (result.isSuccess() && !result.isClaimed())
                 {
@@ -528,6 +532,101 @@ public class OsrsJournalPlugin extends Plugin
             ));
         }
 
+        return records;
+    }
+
+    /**
+     * Achievement diary tier completion from known varbits.
+     * Value {@code 1} means that region+tier is finished.
+     */
+    private List<Map<String, Object>> buildDiaryRecords(String rsn)
+    {
+        Object[][] diaries = {
+            {"ardougne", "easy", Varbits.DIARY_ARDOUGNE_EASY},
+            {"ardougne", "medium", Varbits.DIARY_ARDOUGNE_MEDIUM},
+            {"ardougne", "hard", Varbits.DIARY_ARDOUGNE_HARD},
+            {"ardougne", "elite", Varbits.DIARY_ARDOUGNE_ELITE},
+            {"desert", "easy", Varbits.DIARY_DESERT_EASY},
+            {"desert", "medium", Varbits.DIARY_DESERT_MEDIUM},
+            {"desert", "hard", Varbits.DIARY_DESERT_HARD},
+            {"desert", "elite", Varbits.DIARY_DESERT_ELITE},
+            {"falador", "easy", Varbits.DIARY_FALADOR_EASY},
+            {"falador", "medium", Varbits.DIARY_FALADOR_MEDIUM},
+            {"falador", "hard", Varbits.DIARY_FALADOR_HARD},
+            {"falador", "elite", Varbits.DIARY_FALADOR_ELITE},
+            {"fremennik", "easy", Varbits.DIARY_FREMENNIK_EASY},
+            {"fremennik", "medium", Varbits.DIARY_FREMENNIK_MEDIUM},
+            {"fremennik", "hard", Varbits.DIARY_FREMENNIK_HARD},
+            {"fremennik", "elite", Varbits.DIARY_FREMENNIK_ELITE},
+            {"kandarin", "easy", Varbits.DIARY_KANDARIN_EASY},
+            {"kandarin", "medium", Varbits.DIARY_KANDARIN_MEDIUM},
+            {"kandarin", "hard", Varbits.DIARY_KANDARIN_HARD},
+            {"kandarin", "elite", Varbits.DIARY_KANDARIN_ELITE},
+            {"karamja", "easy", Varbits.DIARY_KARAMJA_EASY},
+            {"karamja", "medium", Varbits.DIARY_KARAMJA_MEDIUM},
+            {"karamja", "hard", Varbits.DIARY_KARAMJA_HARD},
+            {"karamja", "elite", Varbits.DIARY_KARAMJA_ELITE},
+            {"kourend", "easy", Varbits.DIARY_KOUREND_EASY},
+            {"kourend", "medium", Varbits.DIARY_KOUREND_MEDIUM},
+            {"kourend", "hard", Varbits.DIARY_KOUREND_HARD},
+            {"kourend", "elite", Varbits.DIARY_KOUREND_ELITE},
+            {"lumbridge", "easy", Varbits.DIARY_LUMBRIDGE_EASY},
+            {"lumbridge", "medium", Varbits.DIARY_LUMBRIDGE_MEDIUM},
+            {"lumbridge", "hard", Varbits.DIARY_LUMBRIDGE_HARD},
+            {"lumbridge", "elite", Varbits.DIARY_LUMBRIDGE_ELITE},
+            {"morytania", "easy", Varbits.DIARY_MORYTANIA_EASY},
+            {"morytania", "medium", Varbits.DIARY_MORYTANIA_MEDIUM},
+            {"morytania", "hard", Varbits.DIARY_MORYTANIA_HARD},
+            {"morytania", "elite", Varbits.DIARY_MORYTANIA_ELITE},
+            {"varrock", "easy", Varbits.DIARY_VARROCK_EASY},
+            {"varrock", "medium", Varbits.DIARY_VARROCK_MEDIUM},
+            {"varrock", "hard", Varbits.DIARY_VARROCK_HARD},
+            {"varrock", "elite", Varbits.DIARY_VARROCK_ELITE},
+            {"western", "easy", Varbits.DIARY_WESTERN_EASY},
+            {"western", "medium", Varbits.DIARY_WESTERN_MEDIUM},
+            {"western", "hard", Varbits.DIARY_WESTERN_HARD},
+            {"western", "elite", Varbits.DIARY_WESTERN_ELITE},
+            {"wilderness", "easy", Varbits.DIARY_WILDERNESS_EASY},
+            {"wilderness", "medium", Varbits.DIARY_WILDERNESS_MEDIUM},
+            {"wilderness", "hard", Varbits.DIARY_WILDERNESS_HARD},
+            {"wilderness", "elite", Varbits.DIARY_WILDERNESS_ELITE},
+        };
+
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (Object[] d : diaries)
+        {
+            int varbit = (Integer) d[2];
+            records.add(ImmutableMap.of(
+                "rsn", rsn,
+                "region", d[0],
+                "tier", d[1],
+                "complete", client.getVarbitValue(varbit) == 1
+            ));
+        }
+        return records;
+    }
+
+    /** Completed task counts per combat achievement tier. */
+    private List<Map<String, Object>> buildCombatAchievementRecords(String rsn)
+    {
+        Object[][] tiers = {
+            {"easy", Varbits.COMBAT_ACHIEVEMENT_TIER_EASY},
+            {"medium", Varbits.COMBAT_ACHIEVEMENT_TIER_MEDIUM},
+            {"hard", Varbits.COMBAT_ACHIEVEMENT_TIER_HARD},
+            {"elite", Varbits.COMBAT_ACHIEVEMENT_TIER_ELITE},
+            {"master", Varbits.COMBAT_ACHIEVEMENT_TIER_MASTER},
+            {"grandmaster", Varbits.COMBAT_ACHIEVEMENT_TIER_GRANDMASTER},
+        };
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (Object[] t : tiers)
+        {
+            int varbit = (Integer) t[1];
+            records.add(ImmutableMap.of(
+                "rsn", rsn,
+                "tier", t[0],
+                "completed", client.getVarbitValue(varbit)
+            ));
+        }
         return records;
     }
 

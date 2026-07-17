@@ -254,6 +254,8 @@ public class HostedApiService
         private List<Map<String, Object>> player_quests;
         private List<Map<String, Object>> player_equipment;
         private List<Map<String, Object>> player_bank;
+        private List<Map<String, Object>> player_diaries;
+        private List<Map<String, Object>> player_combat_achievements;
         private boolean replace_equipment;
         private boolean replace_bank;
         private boolean touch_last_synced = true;
@@ -293,6 +295,18 @@ public class HostedApiService
         {
             this.player_bank = records;
             this.replace_bank = replace;
+            return this;
+        }
+
+        SyncPayload diaries(List<Map<String, Object>> records)
+        {
+            this.player_diaries = records;
+            return this;
+        }
+
+        SyncPayload combatAchievements(List<Map<String, Object>> records)
+        {
+            this.player_combat_achievements = records;
             return this;
         }
 
