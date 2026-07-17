@@ -233,10 +233,11 @@ public class HostedApiService
     private void addPluginClientId(Request.Builder builder)
     {
         String clientId = config.pluginClientId();
-        if (clientId != null && !clientId.isEmpty())
+        if (clientId == null || clientId.isEmpty())
         {
-            builder.header("X-Plugin-Client-Id", clientId);
+            clientId = JournalConstants.DEFAULT_PLUGIN_CLIENT_ID;
         }
+        builder.header("X-Plugin-Client-Id", clientId);
     }
 
     /**

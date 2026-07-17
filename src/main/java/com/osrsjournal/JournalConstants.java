@@ -19,6 +19,15 @@ public final class JournalConstants
     public static final String API_BASE_URL =
         SUPABASE_PROJECT_URL + "/functions/v1";
 
+    /**
+     * Sent as {@code X-Plugin-Client-Id} on pair-init. Not a secret (it ships in
+     * the public jar) — it just lets the backend reject naive scripted abuse
+     * that doesn't bother mimicking the plugin. Self-hosters can override it in
+     * the Advanced config.
+     */
+    public static final String DEFAULT_PLUGIN_CLIENT_ID =
+        "bdc873d042e7467bbd58223828c05662";
+
     private JournalConstants()
     {
     }

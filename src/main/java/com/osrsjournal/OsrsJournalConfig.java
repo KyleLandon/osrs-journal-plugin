@@ -94,7 +94,7 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "pluginClientId",
         name = "Client ID",
-        description = "Only if your backend requires X-Plugin-Client-Id",
+        description = "X-Plugin-Client-Id override for self-hosted backends. Leave blank to use the built-in id.",
         section = advancedSection,
         position = 7
     )
