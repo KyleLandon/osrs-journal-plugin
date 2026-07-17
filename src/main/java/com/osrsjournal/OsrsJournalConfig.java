@@ -5,6 +5,12 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 
+/**
+ * Plugin settings. Privacy-sensitive defaults are deliberate:
+ * bank sync is <b>off</b> (opt-in, per Plugin Hub expectations) while skills and
+ * quests sync automatically — matching what public hiscores already expose.
+ * The Advanced section only matters for self-hosted backends and stays collapsed.
+ */
 @ConfigGroup("osrsjournal")
 public interface OsrsJournalConfig extends Config
 {

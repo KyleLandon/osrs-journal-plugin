@@ -7,6 +7,13 @@ import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
 
+/**
+ * Immutable view-model for the sidebar panel.
+ *
+ * <p>Built on the <em>client thread</em> via {@link #fromClient} (the only place
+ * the RuneLite {@code Client} API may be read), then handed to Swing untouched —
+ * so the panel never needs to reach back into game state from the EDT.
+ */
 @Getter
 class JournalSnapshot
 {
@@ -49,6 +56,7 @@ class JournalSnapshot
         this.accountLinked = accountLinked;
     }
 
+    /** One-line status for the panel header, ordered by what the user should do next. */
     String getStatusText()
     {
         if (!syncEnabled)

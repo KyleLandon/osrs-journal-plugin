@@ -15,7 +15,20 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 
 /**
- * Writes game data through hosted Supabase Edge Functions (multi-user mode).
+ * HTTP client for the hosted Supabase Edge Functions (multi-user mode).
+ *
+ * <p>The plugin deliberately holds no database credentials: every write goes
+ * through an Edge Function that validates the per-character sync token
+ * ({@code X-Sync-Token}) server-side and performs the actual database work with
+ * the service role. Endpoints used:
+ * <ul>
+ *   <li>{@code pair-init} — issue/reuse a sync token + pairing code for an RSN</li>
+ *   <li>{@code sync} — batched upsert of skills/quests/equipment/bank</li>
+ *   <li>{@code localhost-session} — short-lived read token for "Open full journal"</li>
+ * </ul>
+ *
+ * <p>Uses RuneLite's injected {@link OkHttpClient}; all calls are synchronous and
+ * must run on the shared executor, never the client thread.
  */
 @Slf4j
 @Singleton
@@ -32,11 +45,17 @@ public class HostedApiService
     @Inject
     private OsrsJournalConfig config;
 
+    /** Production endpoints by default; self-hosters can override in Advanced config. */
     String resolveApiBase()
     {
         return JournalConstants.resolveApiBase(config.apiBaseUrl());
     }
 
+    /**
+     * Requests a pairing code + sync token for {@code rsn}.
+     * Returns null on any failure — callers treat that as "pairing unavailable"
+     * and retry later (rate limits on the server make hammering pointless).
+     */
     PairingState pairInit(String rsn)
     {
         String base = resolveApiBase();
@@ -75,6 +94,12 @@ public class HostedApiService
         }
     }
 
+    /**
+     * Exchanges the sync token for a ~5 minute read-only session token, so
+     * "Open full journal" can show bank/gear in the browser without the user
+     * signing in. Returns null if the exchange fails (caller falls back to the
+     * public profile URL).
+     */
     String createLocalhostSession(String syncToken)
     {
         String base = resolveApiBase();
@@ -108,6 +133,12 @@ public class HostedApiService
         }
     }
 
+    /**
+     * Posts a batched sync payload. One request carries any combination of
+     * players/skills/quests/equipment/bank rows — the server upserts them in
+     * FK-safe order and answers with {@code claimed}, which doubles as a free
+     * "is this character linked yet?" check on every sync.
+     */
     SyncResult sync(String rsn, String syncToken, SyncPayload payload)
     {
         String base = resolveApiBase();
@@ -208,6 +239,12 @@ public class HostedApiService
         }
     }
 
+    /**
+     * Request body for {@code /sync}, serialized by Gson — field names match the
+     * Edge Function's expected JSON keys exactly (hence snake_case).
+     * {@code replace_*} flags make equipment/bank a full delete-then-insert so
+     * removed items disappear; skills/quests are plain upserts.
+     */
     static class SyncPayload
     {
         private String rsn;

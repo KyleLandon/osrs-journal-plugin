@@ -16,6 +16,16 @@ import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
 
+/**
+ * Sidebar panel: character summary, pairing call-to-action, and buttons to open
+ * the full web journal or refresh.
+ *
+ * <p>Renders from {@link JournalSnapshot} view-models only — all game-state reads
+ * happen on the client thread before a snapshot reaches this class, and all
+ * methods here are EDT-only except where noted. The body is a single HTML
+ * {@link JEditorPane} because the layout (pair code, skill table, quest list)
+ * is easier to keep readable as markup than as nested Swing containers.
+ */
 class OsrsJournalPanel extends PluginPanel
 {
     private final JEditorPane summaryPane = new JEditorPane();
