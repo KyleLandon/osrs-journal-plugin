@@ -9,6 +9,19 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.client.config.ConfigManager;
 
+/**
+ * Persists per-character sync tokens in RuneLite's config store.
+ *
+ * <p>The sync token is the plugin's <em>write credential</em>: the backend accepts
+ * game data for an RSN only when the request carries that character's token
+ * ({@code X-Sync-Token} header). Tokens are issued by {@code pair-init} and bound
+ * to the RSN server-side, so a leaked token can only affect its own character —
+ * and the plugin self-heals by re-pairing if the server rotates it.
+ *
+ * <p>Stored as a single JSON map ({@code rsn -> token}) under one config key so
+ * users with multiple characters on the same RuneLite profile each keep their
+ * own token across restarts.
+ */
 @Singleton
 class SyncTokenStore
 {

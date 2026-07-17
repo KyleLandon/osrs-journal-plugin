@@ -9,6 +9,12 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Syncs game data to the OSRS Journal cloud through Edge Functions,
  * authenticated by a per-character sync token.
+ *
+ * <p>Thin orchestration layer between the plugin's event handlers and
+ * {@link HostedApiService}: it looks up the token for the RSN, shapes the
+ * payload, and feeds pairing-state updates back to {@link PairingService}.
+ * All methods perform network I/O and must be called from executor threads,
+ * never the client thread.
  */
 @Slf4j
 @Singleton

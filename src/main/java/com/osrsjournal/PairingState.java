@@ -2,6 +2,17 @@ package com.osrsjournal;
 
 import lombok.Getter;
 
+/**
+ * Immutable snapshot of a character's pairing status, shown in the sidebar.
+ *
+ * <p>Two shapes exist:
+ * <ul>
+ *   <li><b>Awaiting link</b> — {@code pairCode} set, {@code linked=false}: the user
+ *       must enter the code on the website within {@code expiresInSeconds}.</li>
+ *   <li><b>Linked</b> — {@code linked=true}, {@code pairCode} may be null when the
+ *       state was derived from a sync response rather than pair-init.</li>
+ * </ul>
+ */
 @Getter
 class PairingState
 {

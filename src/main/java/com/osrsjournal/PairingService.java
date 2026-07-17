@@ -4,6 +4,20 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 
+/**
+ * Tracks the pairing lifecycle between this RuneLite client and a website account.
+ *
+ * <p>Ownership of an RSN is proven by the plugin running while logged in as that
+ * character: {@code pair-init} issues a short-lived code + sync token, the user
+ * enters the code on the website, and {@code pair-claim} binds the token to their
+ * account. To keep server load low, pair-init is only called when there is no
+ * stored token (or the token went stale) — for already-linked characters the
+ * linked state is derived from the {@code claimed} field of sync responses via
+ * {@link #updateLinkedState}.
+ *
+ * <p>{@code lastState} is volatile: it is written from executor threads and read
+ * from the client thread when building panel snapshots.
+ */
 @Slf4j
 @Singleton
 class PairingService
@@ -16,6 +30,12 @@ class PairingService
 
     private volatile PairingState lastState;
 
+    /**
+     * Calls pair-init and stores the returned sync token. Network I/O — executor
+     * threads only. Idempotent: for a known RSN the server reuses the existing
+     * token and reports whether it is already linked; otherwise it mints a new
+     * token and a fresh pairing code.
+     */
     PairingState ensurePairing(String rsn)
     {
         PairingState init = hostedApiService.pairInit(rsn);
