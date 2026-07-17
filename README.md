@@ -42,12 +42,29 @@ You can link multiple characters (each gets its own pairing code when you log in
 
 ## Privacy
 
-- **Public profile** (skills and quests) is on by default — toggle it off on the
-  website or in plugin settings if you want to be invisible.
+- **Public profile** (skills and quests) is on by default — the same data the
+  official OSRS hiscores already publish. Toggle it off on the website or in
+  plugin settings if you want to be invisible.
 - **Bank and gear are always private** on public profiles — only you can see bank/gear when signed in.
 - **Sync Bank is off by default** — enable it in plugin settings only if you want bank data synced.
 - No passwords or account credentials are ever read or transmitted — the plugin
   only reads game state RuneLite already exposes (skills, quests, items).
+- **Delete everything anytime** — Account → *Delete account & data* on the website
+  removes all synced data and your account (see the [privacy policy](https://journal.osrsjournal.com/privacy.html)).
+
+## Transparency
+
+The entire service is open source, so you can verify exactly what happens to your data:
+
+| Component | Repo |
+|-----------|------|
+| RuneLite plugin | [osrs-journal-plugin](https://github.com/KyleLandon/osrs-journal-plugin) (this repo) |
+| Backend (Edge Functions, database schema, security policies) | [osrs-journal-backend](https://github.com/KyleLandon/osrs-journal-backend) |
+| Website | [osrs-journal-web](https://github.com/KyleLandon/osrs-journal-web) |
+
+The plugin ships **no database credentials** — every write goes through an
+authenticated backend function scoped to your character's sync token, and
+row-level security keeps private data (bank, gear) readable only by you.
 
 ## Sidebar panel
 
