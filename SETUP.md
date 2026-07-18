@@ -93,22 +93,23 @@ powershell -File scripts/build-run-dev-exe.ps1
 
 Once loaded, click the **OSRS Journal** icon in the left sidebar for the in-game summary panel.
 
-**No configuration needed.** The production endpoints are baked into
-`JournalConstants.java`. Install the plugin, log into OSRS, and:
+Production endpoints are baked into `JournalConstants.java`. Plugin Hub rules require
+third-party sync to be **opt-in**. Install the plugin, log into OSRS, and:
 
-1. The sidebar shows a pairing code (e.g. `K7M2-9X4P`).
-2. Go to [journal.osrsjournal.com](https://journal.osrsjournal.com) → **Sign in**
+1. Enable **Enable Sync** in plugin settings and confirm the 3rd-party warning.
+2. The sidebar shows a pairing code (e.g. `K7M2-9X4P`).
+3. Go to [journal.osrsjournal.com](https://journal.osrsjournal.com) → **Sign in**
    (Google, Discord, or email).
-3. Enter the code under **Link character**.
+4. Enter the code under **Link character**.
 
-Done — your stats, quests and gear sync automatically from then on.
+Done — your stats, quests and gear sync while Enable Sync stays on.
 **Open full journal** in the sidebar opens the hosted site with your character loaded.
 If no code appears (e.g. the backend was unreachable at login), click **Refresh**.
 
 | Setting | Default |
 |---|---|
-| Enable Sync | ✅ |
-| Sync Bank | ❌ off by default (opt-in in plugin settings) |
+| Enable Sync | ❌ off (Plugin Hub opt-in + warning) |
+| Sync Bank | ❌ off (second opt-in + warning) |
 | Public Profile | ✅ — skills/quests visible like Wise Old Man; bank and gear always private |
 
 The **Advanced** overrides (API override, Web key override, Client ID) should stay

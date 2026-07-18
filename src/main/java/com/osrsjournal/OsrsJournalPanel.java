@@ -158,9 +158,18 @@ class OsrsJournalPanel extends PluginPanel
             .append(" · QP ").append(s.getQuestPoints())
             .append(" · Total ").append(s.getTotalLevel()).append("</p>");
 
-        // Pairing call-to-action goes first — it must never be pushed out of view.
-        if (s.getPairCode() != null && !s.getPairCode().isEmpty() && !s.isAccountLinked())
+        if (!s.isSyncEnabled())
         {
+            sb.append("<hr/>");
+            sb.append("<p style='color:#fbbf24;font-size:11px'>Sync is off. Enable <b>Enable Sync</b> in plugin "
+                + "settings (you'll see a confirmation about a 3rd-party server), then pair on the website.</p>");
+            sb.append("<p style='color:#64748b;font-size:11px'><a href='")
+                .append(JournalConstants.PRIVACY_URL)
+                .append("' style='color:#60a5fa'>Privacy policy</a></p>");
+        }
+        else if (s.getPairCode() != null && !s.getPairCode().isEmpty() && !s.isAccountLinked())
+        {
+            // Pairing call-to-action goes first — it must never be pushed out of view.
             sb.append("<hr/>");
             sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Link account</b></p>");
             sb.append("<p style='color:#f1f5f9;font-size:18px;letter-spacing:2px'><b>")
@@ -172,12 +181,12 @@ class OsrsJournalPanel extends PluginPanel
         }
         else if (s.isAccountLinked())
         {
-            sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked — stats and quests sync automatically.</p>");
+            sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked.</p>");
         }
 
         if (s.isSyncEnabled())
         {
-            sb.append("<p style='color:#64748b;font-size:11px'>Skills and quests sync while you play. Bank sync is ")
+            sb.append("<p style='color:#64748b;font-size:11px'>Sync is on — skills and quests update while you play. Bank sync is ")
                 .append(s.isBankSyncEnabled() ? "<span style='color:#fbbf24'>on</span>" : "off")
                 .append(" — change in plugin settings. <a href='")
                 .append(JournalConstants.PRIVACY_URL)

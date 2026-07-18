@@ -61,7 +61,7 @@ class JournalSnapshot
     {
         if (!syncEnabled)
         {
-            return "Sync paused — enable in plugin settings.";
+            return "Sync off — turn on Enable Sync in plugin settings (confirm the 3rd-party warning).";
         }
         if (pairCode != null && !pairCode.isEmpty() && !accountLinked)
         {

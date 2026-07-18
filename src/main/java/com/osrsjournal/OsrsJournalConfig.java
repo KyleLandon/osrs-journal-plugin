@@ -6,9 +6,9 @@ import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 
 /**
- * Plugin settings. Privacy-sensitive defaults are deliberate:
- * bank sync is <b>off</b> (opt-in, per Plugin Hub expectations) while skills and
- * quests sync automatically — matching what public hiscores already expose.
+ * Plugin settings. Plugin Hub requires any third-party network feature to be
+ * <b>opt-in</b> (disabled by default) with the standard {@code warning} text.
+ * Bank sync is a second opt-in on top of that.
  * The Advanced section only matters for self-hosted backends and stays collapsed.
  */
 @ConfigGroup("osrsjournal")
@@ -24,20 +24,25 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "syncEnabled",
         name = "Enable Sync",
-        description = "Master switch — turn off to pause all syncing to journal.osrsjournal.com",
+        description = "Opt in to sync your character (skills, quests, worn gear, diaries, combat achievements) "
+            + "to journal.osrsjournal.com. Off by default — enable this, then pair the character on the website.",
+        // Exact wording required by RuneLite Plugin Hub / example-plugin AGENTS.md
+        warning = "This feature submits your IP address to a 3rd-party server not controlled or verified by RuneLite developers",
         section = syncSection,
         position = 1
     )
     default boolean syncEnabled()
     {
-        return true;
+        // Plugin Hub: third-party server features must be disabled by default.
+        return false;
     }
 
     @ConfigItem(
         keyName = "syncBank",
         name = "Sync Bank",
-        description = "When enabled, sends your full bank to journal.osrsjournal.com each time you open the bank. "
-            + "Off by default — only you can see bank data when signed in on the website.",
+        description = "When enabled (and sync is on), sends your full bank to journal.osrsjournal.com each time "
+            + "you open the bank. Only you can see bank data when signed in on the website.",
+        warning = "This feature submits your IP address to a 3rd-party server not controlled or verified by RuneLite developers",
         section = syncSection,
         position = 2
     )

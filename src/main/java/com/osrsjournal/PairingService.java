@@ -47,7 +47,7 @@ class PairingService
 
         syncTokenStore.saveToken(rsn, init.getSyncToken());
         lastState = init;
-        log.info("OSRS Journal: pairing code for '{}' is {} (linked={})",
+        log.debug("OSRS Journal: pairing code for '{}' is {} (linked={})",
             rsn, init.getPairCode(), init.isLinked());
         return init;
     }

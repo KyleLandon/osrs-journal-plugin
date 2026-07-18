@@ -62,10 +62,10 @@ import net.runelite.client.util.ImageUtil;
  * never blocked by network activity.
  */
 @Slf4j
-@PluginDescriptor(
+    @PluginDescriptor(
     name = "OSRS Journal",
     configName = "osrsjournal",
-    description = "Syncs your character to journal.osrsjournal.com — stats, quests and gear with a sidebar summary. Bank sync is opt-in.",
+    description = "Opt-in sync of your character to journal.osrsjournal.com — stats, quests and gear with a sidebar summary. Bank sync is a separate opt-in.",
     tags = {"sync", "cloud", "stats", "quests", "journal", "tracker"}
 )
 public class OsrsJournalPlugin extends Plugin
@@ -221,7 +221,32 @@ public class OsrsJournalPlugin extends Plugin
     @Subscribe
     public void onConfigChanged(ConfigChanged event)
     {
-        if (!"osrsjournal".equals(event.getGroup()) || !"publicProfile".equals(event.getKey()))
+        if (!"osrsjournal".equals(event.getGroup()))
+        {
+            return;
+        }
+
+        if ("syncEnabled".equals(event.getKey()))
+        {
+            if (config.syncEnabled())
+            {
+                // User just opted in (and confirmed the Hub warning) — sync this session.
+                executor.schedule(this::performLoginSync, 1, TimeUnit.SECONDS);
+            }
+            else
+            {
+                cancelSkillDebounce();
+                refreshPanel();
+            }
+            return;
+        }
+
+        if (!"publicProfile".equals(event.getKey()))
+        {
+            return;
+        }
+        // Privacy push hits the 3rd-party API — only when sync is opted in.
+        if (!config.syncEnabled())
         {
             return;
         }
@@ -334,8 +359,6 @@ public class OsrsJournalPlugin extends Plugin
      */
     private void performLoginSync()
     {
-        if (!config.syncEnabled()) return;
-
         clientThread.invokeLater(() ->
         {
             if (client.getGameState() != GameState.LOGGED_IN) return;
@@ -347,6 +370,14 @@ public class OsrsJournalPlugin extends Plugin
             if (rsn == null || rsn.isEmpty()) return;
 
             currentRsn = rsn;
+
+            // Always refresh the local sidebar; network only after Hub opt-in.
+            if (!config.syncEnabled())
+            {
+                refreshPanel();
+                return;
+            }
+
             log.debug("OSRS Journal: full sync for '{}'", rsn);
 
             // Collect all data on the client thread before going async
@@ -743,8 +774,9 @@ public class OsrsJournalPlugin extends Plugin
     private void manualRefresh()
     {
         final String rsn = currentRsn;
-        if (rsn == null)
+        if (rsn == null || !config.syncEnabled())
         {
+            // Local sidebar only — no pair-init / HTTP unless sync is opted in.
             refreshPanel();
             return;
         }

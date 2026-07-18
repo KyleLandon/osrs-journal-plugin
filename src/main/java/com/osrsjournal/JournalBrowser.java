@@ -22,13 +22,16 @@ class JournalBrowser
     private HostedApiService hostedApiService;
 
     @Inject
+    private OsrsJournalConfig config;
+
+    @Inject
     JournalBrowser()
     {
     }
 
     /**
      * Opens the journal in the browser. Performs network I/O (localhost-session
-     * exchange) — must be called off the client/Swing threads.
+     * exchange) only when sync is opted in — must be called off the client/Swing threads.
      *
      * @return a short status message describing what happened, for the sidebar.
      */
@@ -36,7 +39,8 @@ class JournalBrowser
     {
         String sessionToken = null;
         boolean sessionFailed = false;
-        if (rsn != null)
+        // Session exchange hits the 3rd-party API — require the same opt-in as sync.
+        if (rsn != null && config.syncEnabled())
         {
             String syncToken = journalSyncService.getSyncToken(rsn);
             if (syncToken != null)
