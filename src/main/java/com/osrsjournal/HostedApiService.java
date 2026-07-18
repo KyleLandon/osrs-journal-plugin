@@ -256,6 +256,8 @@ public class HostedApiService
         private List<Map<String, Object>> player_bank;
         private List<Map<String, Object>> player_diaries;
         private List<Map<String, Object>> player_combat_achievements;
+        /** Inventory snapshot → players.inventory_tracked (counted with bank on the site). */
+        private List<Map<String, Object>> inventory_tracked;
         private boolean replace_equipment;
         private boolean replace_bank;
         private boolean touch_last_synced = true;
@@ -295,6 +297,13 @@ public class HostedApiService
         {
             this.player_bank = records;
             this.replace_bank = replace;
+            return this;
+        }
+
+        /** Inventory snapshot written to players.inventory_tracked by /sync. */
+        SyncPayload inventory(List<Map<String, Object>> records)
+        {
+            this.inventory_tracked = records != null ? records : java.util.Collections.emptyList();
             return this;
         }
 

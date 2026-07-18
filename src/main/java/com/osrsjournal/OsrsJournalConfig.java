@@ -39,9 +39,10 @@ public interface OsrsJournalConfig extends Config
 
     @ConfigItem(
         keyName = "syncBank",
-        name = "Sync Bank",
-        description = "When enabled (and sync is on), sends your full bank to journal.osrsjournal.com each time "
-            + "you open the bank. Only you can see bank data when signed in on the website.",
+        name = "Sync Bank & Inventory",
+        description = "When enabled (and sync is on), sends your bank to journal.osrsjournal.com when you open it, "
+            + "and keeps your inventory in sync so owned items count whether they are in the bank or your bag. "
+            + "Only you can see this data when signed in on the website.",
         warning = "This feature submits your IP address to a 3rd-party server not controlled or verified by RuneLite developers",
         section = syncSection,
         position = 2

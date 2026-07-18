@@ -106,6 +106,12 @@ class JournalSyncService
         return syncPartial(rsn, new HostedApiService.SyncPayload().bank(records, true));
     }
 
+    /** Inventory snapshot stored on players.inventory_tracked (counts with bank on the site). */
+    boolean syncInventory(String rsn, List<Map<String, Object>> records)
+    {
+        return syncPartial(rsn, new HostedApiService.SyncPayload().inventory(records));
+    }
+
     /** Pushes the profile privacy flag; only called when the user flips the config toggle. */
     boolean syncPrivacy(String rsn, boolean isPublic)
     {

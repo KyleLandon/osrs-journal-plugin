@@ -113,6 +113,9 @@ public class OsrsJournalPlugin extends Plugin
     /** Debounce handle for skill sync — cancelled/rescheduled on every {@link StatChanged}. */
     private ScheduledFuture<?> skillSyncFuture;
 
+    /** Debounce handle for tracked-inventory sync (Marks of grace / Graceful). */
+    private ScheduledFuture<?> inventorySyncFuture;
+
     /** Snapshot of quest states used to detect changes between polls. */
     private final Map<Quest, QuestState> lastQuestStates = new EnumMap<>(Quest.class);
 
@@ -163,6 +166,7 @@ public class OsrsJournalPlugin extends Plugin
     protected void shutDown()
     {
         cancelSkillDebounce();
+        cancelInventoryDebounce();
         lastQuestStates.clear();
         currentRsn = null;
         clientToolbar.removeNavigation(navButton);
@@ -201,6 +205,7 @@ public class OsrsJournalPlugin extends Plugin
                 lastQuestStates.clear();
                 pairingService.clearState();
                 cancelSkillDebounce();
+                cancelInventoryDebounce();
                 SwingUtilities.invokeLater(() ->
                 {
                     if (panel != null)
@@ -302,6 +307,7 @@ public class OsrsJournalPlugin extends Plugin
      * <ul>
      *   <li>{@link InventoryID#EQUIPMENT} — syncs worn gear immediately</li>
      *   <li>{@link InventoryID#BANK} — full bank re-sync (delete + insert) when opened</li>
+     *   <li>{@link InventoryID#INVENTORY} — full inventory snapshot (when Sync Bank is on)</li>
      * </ul>
      *
      * <p>Data is read here on the client thread, then handed to the executor for network I/O.
@@ -324,8 +330,17 @@ public class OsrsJournalPlugin extends Plugin
         }
         else if (containerId == InventoryID.BANK.getId() && config.syncBank())
         {
-            List<Map<String, Object>> records = buildBankRecords(rsn);
-            executor.execute(() -> syncBank(rsn, records));
+            List<Map<String, Object>> bank = buildBankRecords(rsn);
+            List<Map<String, Object>> inv = buildInventoryRecords();
+            executor.execute(() ->
+            {
+                syncBank(rsn, bank);
+                syncInventory(rsn, inv);
+            });
+        }
+        else if (containerId == InventoryID.INVENTORY.getId() && config.syncBank())
+        {
+            scheduleInventorySync(rsn);
         }
     }
 
@@ -502,6 +517,28 @@ public class OsrsJournalPlugin extends Plugin
     private void syncBank(String rsn, List<Map<String, Object>> records)
     {
         journalSyncService.syncBank(rsn, records);
+    }
+
+    private void syncInventory(String rsn, List<Map<String, Object>> records)
+    {
+        journalSyncService.syncInventory(rsn, records);
+    }
+
+    /** Debounce inventory pickups so we don't sync on every tick of a stack change. */
+    private void scheduleInventorySync(String rsn)
+    {
+        cancelInventoryDebounce();
+        inventorySyncFuture = executor.schedule(() ->
+            clientThread.invoke(() ->
+            {
+                if (!config.syncEnabled() || !config.syncBank() || !rsn.equals(currentRsn))
+                {
+                    return;
+                }
+                List<Map<String, Object>> inv = buildInventoryRecords();
+                executor.execute(() -> syncInventory(rsn, inv));
+            }),
+            2, TimeUnit.SECONDS);
     }
 
     // ── Record builders (must be called on the client thread) ─────────────────
@@ -686,12 +723,13 @@ public class OsrsJournalPlugin extends Plugin
                 continue;
             }
 
-            String itemName = resolveItemName(item.getId());
+            int itemId = itemManager.canonicalize(item.getId());
+            String itemName = resolveItemName(itemId);
             records.add(ImmutableMap.<String, Object>builder()
                 .put("rsn", rsn)
                 .put("slot_id", idx)
                 .put("slot_name", slot.name().toLowerCase())
-                .put("item_id", item.getId())
+                .put("item_id", itemId)
                 .put("item_name", itemName)
                 .put("quantity", item.getQuantity())
                 .build());
@@ -708,7 +746,10 @@ public class OsrsJournalPlugin extends Plugin
             return new ArrayList<>();
         }
 
-        List<Map<String, Object>> records = new ArrayList<>();
+        // Canonicalize noted/placeholder IDs so journal icons & GE prices resolve.
+        // Merge stacks that collapse to the same canonical id (noted + unnoted).
+        Map<Integer, int[]> qtyById = new java.util.LinkedHashMap<>();
+        Map<Integer, String> nameById = new java.util.HashMap<>();
         for (Item item : container.getItems())
         {
             // quantity <= 0 filters bank placeholders — no reason to sync those
@@ -716,14 +757,71 @@ public class OsrsJournalPlugin extends Plugin
             {
                 continue;
             }
-            records.add(ImmutableMap.of(
-                "rsn",       rsn,
-                "item_id",   item.getId(),
-                "item_name", resolveItemName(item.getId()),
-                "quantity",  item.getQuantity()
-            ));
+            int itemId = itemManager.canonicalize(item.getId());
+            int[] qty = qtyById.get(itemId);
+            if (qty == null)
+            {
+                qtyById.put(itemId, new int[]{item.getQuantity()});
+                nameById.put(itemId, resolveItemName(itemId));
+            }
+            else
+            {
+                qty[0] += item.getQuantity();
+            }
         }
 
+        List<Map<String, Object>> records = new ArrayList<>(qtyById.size());
+        for (Map.Entry<Integer, int[]> e : qtyById.entrySet())
+        {
+            records.add(ImmutableMap.of(
+                "rsn",       rsn,
+                "item_id",   e.getKey(),
+                "item_name", nameById.get(e.getKey()),
+                "quantity",  e.getValue()[0]
+            ));
+        }
+        return records;
+    }
+
+    /** Full inventory snapshot (canonicalized), same shape as bank rows minus rsn. */
+    private List<Map<String, Object>> buildInventoryRecords()
+    {
+        ItemContainer container = client.getItemContainer(InventoryID.INVENTORY);
+        if (container == null)
+        {
+            return new ArrayList<>();
+        }
+
+        Map<Integer, int[]> qtyById = new java.util.LinkedHashMap<>();
+        Map<Integer, String> nameById = new java.util.HashMap<>();
+        for (Item item : container.getItems())
+        {
+            if (item == null || item.getId() == -1 || item.getQuantity() <= 0)
+            {
+                continue;
+            }
+            int itemId = itemManager.canonicalize(item.getId());
+            int[] qty = qtyById.get(itemId);
+            if (qty == null)
+            {
+                qtyById.put(itemId, new int[]{item.getQuantity()});
+                nameById.put(itemId, resolveItemName(itemId));
+            }
+            else
+            {
+                qty[0] += item.getQuantity();
+            }
+        }
+
+        List<Map<String, Object>> records = new ArrayList<>(qtyById.size());
+        for (Map.Entry<Integer, int[]> e : qtyById.entrySet())
+        {
+            records.add(ImmutableMap.of(
+                "item_id",   e.getKey(),
+                "item_name", nameById.get(e.getKey()),
+                "quantity",  e.getValue()[0]
+            ));
+        }
         return records;
     }
 
@@ -764,6 +862,15 @@ public class OsrsJournalPlugin extends Plugin
         {
             skillSyncFuture.cancel(false);
             skillSyncFuture = null;
+        }
+    }
+
+    private void cancelInventoryDebounce()
+    {
+        if (inventorySyncFuture != null && !inventorySyncFuture.isDone())
+        {
+            inventorySyncFuture.cancel(false);
+            inventorySyncFuture = null;
         }
     }
 
