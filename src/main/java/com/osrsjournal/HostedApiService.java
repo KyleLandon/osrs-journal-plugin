@@ -1,8 +1,12 @@
 package com.osrsjournal;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import javax.inject.Inject;
@@ -23,7 +27,7 @@ import okhttp3.Response;
  * the service role. Endpoints used:
  * <ul>
  *   <li>{@code pair-init} — issue/reuse a sync token + pairing code for an RSN</li>
- *   <li>{@code sync} — batched upsert of skills/quests/equipment/bank</li>
+ *   <li>{@code sync} — batched upsert of skills/quests/equipment/bank/inventory</li>
  *   <li>{@code localhost-session} — short-lived read token for "Open full journal"</li>
  * </ul>
  *
@@ -79,6 +83,13 @@ public class HostedApiService
             }
 
             JsonObject json = gson.fromJson(response.body().string(), JsonObject.class);
+            if (json == null || !json.has("code") || !json.has("sync_token")
+                || json.get("code").isJsonNull() || json.get("sync_token").isJsonNull())
+            {
+                log.warn("pair-init returned incomplete JSON for '{}'", rsn);
+                return null;
+            }
+
             return new PairingState(
                 rsn,
                 json.get("code").getAsString(),
@@ -87,7 +98,7 @@ public class HostedApiService
                 json.has("expires_in") ? json.get("expires_in").getAsInt() : 600
             );
         }
-        catch (IOException e)
+        catch (IOException | RuntimeException e)
         {
             log.error("pair-init error for '{}'", rsn, e);
             return null;
@@ -124,9 +135,14 @@ public class HostedApiService
             }
 
             JsonObject json = gson.fromJson(response.body().string(), JsonObject.class);
+            if (json == null || !json.has("session_token") || json.get("session_token").isJsonNull())
+            {
+                log.warn("localhost-session returned incomplete JSON");
+                return null;
+            }
             return json.get("session_token").getAsString();
         }
-        catch (IOException e)
+        catch (IOException | RuntimeException e)
         {
             log.error("localhost-session error", e);
             return null;
@@ -135,16 +151,16 @@ public class HostedApiService
 
     /**
      * Posts a batched sync payload. One request carries any combination of
-     * players/skills/quests/equipment/bank rows — the server upserts them in
-     * FK-safe order and answers with {@code claimed}, which doubles as a free
-     * "is this character linked yet?" check on every sync.
+     * players/skills/quests/equipment/bank/inventory rows — the server upserts
+     * them in FK-safe order and answers with {@code claimed}, which doubles as a
+     * free "is this character linked yet?" check on every sync.
      */
     SyncResult sync(String rsn, String syncToken, SyncPayload payload)
     {
         String base = resolveApiBase();
         if (syncToken == null || syncToken.isEmpty())
         {
-            return SyncResult.failed(false);
+            return SyncResult.failed(false, "No sync token");
         }
 
         payload.setRsn(rsn);
@@ -160,23 +176,39 @@ public class HostedApiService
         {
             if (!response.isSuccessful())
             {
-                log.warn("hosted sync failed for '{}': HTTP {}", rsn, response.code());
+                String detail = "HTTP " + response.code();
+                log.warn("hosted sync failed for '{}': {}", rsn, detail);
                 // 401/403 means the stored token is stale (e.g. rotated server-side)
-                return SyncResult.failed(response.code() == 401 || response.code() == 403);
+                boolean authFailed = response.code() == 401 || response.code() == 403;
+                if (response.code() == 429)
+                {
+                    return SyncResult.failed(false, "Rate limited — try again shortly");
+                }
+                return SyncResult.failed(authFailed, detail);
             }
 
             boolean claimed = false;
+            List<String> warnings = Collections.emptyList();
             if (response.body() != null)
             {
                 try
                 {
                     JsonObject json = gson.fromJson(response.body().string(), JsonObject.class);
-                    claimed = json != null && json.has("claimed") && json.get("claimed").getAsBoolean();
+                    if (json != null)
+                    {
+                        claimed = json.has("claimed") && json.get("claimed").getAsBoolean();
+                        warnings = readWarnings(json);
+                    }
                 }
                 catch (RuntimeException e)
                 {
                     log.debug("could not parse sync response for '{}'", rsn, e);
                 }
+            }
+            if (!warnings.isEmpty())
+            {
+                log.warn("hosted sync for '{}' returned warnings: {}", rsn, warnings);
+                return SyncResult.okWithWarnings(claimed, warnings);
             }
             log.debug("hosted sync ok for '{}' (claimed={})", rsn, claimed);
             return SyncResult.ok(claimed);
@@ -184,8 +216,26 @@ public class HostedApiService
         catch (IOException e)
         {
             log.error("hosted sync error for '{}'", rsn, e);
-            return SyncResult.failed(false);
+            return SyncResult.failed(false, e.getMessage() != null ? e.getMessage() : "Network error");
         }
+    }
+
+    private static List<String> readWarnings(JsonObject json)
+    {
+        if (!json.has("warnings") || !json.get("warnings").isJsonArray())
+        {
+            return Collections.emptyList();
+        }
+        JsonArray arr = json.getAsJsonArray("warnings");
+        List<String> out = new ArrayList<>(arr.size());
+        for (JsonElement el : arr)
+        {
+            if (el != null && el.isJsonPrimitive())
+            {
+                out.add(el.getAsString());
+            }
+        }
+        return out;
     }
 
     /** Outcome of a sync call, including the server-reported pairing state. */
@@ -194,22 +244,42 @@ public class HostedApiService
         private final boolean success;
         private final boolean claimed;
         private final boolean authFailed;
+        private final List<String> warnings;
+        private final String error;
 
-        private SyncResult(boolean success, boolean claimed, boolean authFailed)
+        private SyncResult(
+            boolean success,
+            boolean claimed,
+            boolean authFailed,
+            List<String> warnings,
+            String error
+        )
         {
             this.success = success;
             this.claimed = claimed;
             this.authFailed = authFailed;
+            this.warnings = warnings != null ? warnings : Collections.emptyList();
+            this.error = error;
         }
 
         static SyncResult ok(boolean claimed)
         {
-            return new SyncResult(true, claimed, false);
+            return new SyncResult(true, claimed, false, Collections.emptyList(), null);
+        }
+
+        static SyncResult okWithWarnings(boolean claimed, List<String> warnings)
+        {
+            return new SyncResult(true, claimed, false, warnings, null);
         }
 
         static SyncResult failed(boolean authFailed)
         {
-            return new SyncResult(false, false, authFailed);
+            return failed(authFailed, null);
+        }
+
+        static SyncResult failed(boolean authFailed, String error)
+        {
+            return new SyncResult(false, false, authFailed, Collections.emptyList(), error);
         }
 
         boolean isSuccess()
@@ -228,6 +298,21 @@ public class HostedApiService
         {
             return authFailed;
         }
+
+        boolean hasWarnings()
+        {
+            return !warnings.isEmpty();
+        }
+
+        List<String> getWarnings()
+        {
+            return warnings;
+        }
+
+        String getError()
+        {
+            return error;
+        }
     }
 
     private void addPluginClientId(Request.Builder builder)
@@ -243,7 +328,7 @@ public class HostedApiService
     /**
      * Request body for {@code /sync}, serialized by Gson — field names match the
      * Edge Function's expected JSON keys exactly (hence snake_case).
-     * {@code replace_*} flags make equipment/bank a full delete-then-insert so
+     * {@code replace_*} flags make equipment/bank/inventory a full replace so
      * removed items disappear; skills/quests are plain upserts.
      */
     static class SyncPayload
@@ -256,10 +341,11 @@ public class HostedApiService
         private List<Map<String, Object>> player_bank;
         private List<Map<String, Object>> player_diaries;
         private List<Map<String, Object>> player_combat_achievements;
-        /** Inventory snapshot → players.inventory_tracked (counted with bank on the site). */
+        /** Inventory snapshot → player_inventory (counted with bank on the site). */
         private List<Map<String, Object>> inventory_tracked;
         private boolean replace_equipment;
         private boolean replace_bank;
+        private boolean replace_inventory;
         private boolean touch_last_synced = true;
         private Boolean profile_public;
 
@@ -300,10 +386,24 @@ public class HostedApiService
             return this;
         }
 
-        /** Inventory snapshot written to players.inventory_tracked by /sync. */
+        /** Inventory snapshot written to player_inventory by /sync. */
         SyncPayload inventory(List<Map<String, Object>> records)
         {
-            this.inventory_tracked = records != null ? records : java.util.Collections.emptyList();
+            this.inventory_tracked = records != null ? records : Collections.emptyList();
+            this.replace_inventory = true;
+            return this;
+        }
+
+        /** Bank + inventory in one request so the site never sees a half update. */
+        SyncPayload bankAndInventory(
+            List<Map<String, Object>> bankRecords,
+            List<Map<String, Object>> inventoryRecords
+        )
+        {
+            this.player_bank = bankRecords != null ? bankRecords : Collections.emptyList();
+            this.replace_bank = true;
+            this.inventory_tracked = inventoryRecords != null ? inventoryRecords : Collections.emptyList();
+            this.replace_inventory = true;
             return this;
         }
 

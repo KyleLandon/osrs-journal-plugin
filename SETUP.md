@@ -65,11 +65,20 @@ See the [RuneLite Jagex Accounts wiki](https://github.com/runelite/runelite/wiki
 
 ```bat
 export-credentials.bat          rem one-time, if you have a Jagex Account
-run-dev.exe                   rem builds plugin + launches dev RuneLite (builds client only if jar missing)
+run-dev.exe                   rem auto-updates RuneLite, builds plugin, launches
 run-dev.exe --rebuild         rem force full client rebuild, then launch
+run-dev.exe --no-update       rem skip git pull of runelite/ (use local source as-is)
 run-dev.exe --skip-plugin-build rem skip plugin rebuild when iterating on client only
+run-dev.exe --pluginhub-version=1.12.35  rem optional Hub version override
 osrs-journal-plugin\build.bat rem rebuild plugin after code changes
 ```
+
+On each launch, `run-dev.exe`:
+1. **Pulls latest RuneLite** (`git fetch` + `git pull --ff-only`) when `runelite/` is behind
+2. **Rebuilds the client** if source updated, the shaded jar is missing, or the jar is older than the live release
+3. Sets `-Drunelite.pluginhub.version=` so **Plugin Hub plugins still load** in the snapshot/dev client
+
+Use `--no-update` only if you have local RuneLite edits you don't want overwritten. Override Hub with `--pluginhub-version=` only if Hub isn't ready for the newest release yet.
 
 `run-dev.bat` is a thin wrapper around `run-dev.exe` if you prefer the batch file.
 
@@ -84,8 +93,12 @@ powershell -File scripts/build-run-dev-exe.ps1
 1. Clone the main RuneLite repo alongside this plugin (already at `../runelite`).
 2. Open the `runelite` project in IntelliJ with JDK 11.
 3. Run `net.runelite.client.RuneLite` with:
-   - VM options: `-ea --add-opens=java.desktop/sun.awt=ALL-UNNAMED`
+   - VM options: `-ea --add-opens=java.desktop/sun.awt=ALL-UNNAMED -Drunelite.pluginhub.version=1.12.33`
    - Program arguments: `--developer-mode`
+
+   Use the current release version for `-Drunelite.pluginhub.version=` (see
+   `https://static.runelite.net/bootstrap.json`). Without it, Plugin Hub 404s
+   on snapshot clients.
 
 ---
 

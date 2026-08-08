@@ -2,6 +2,7 @@ package com.osrsjournal;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
@@ -21,9 +22,6 @@ import lombok.extern.slf4j.Slf4j;
 class JournalSyncService
 {
     @Inject
-    private OsrsJournalConfig config;
-
-    @Inject
     private HostedApiService hostedApiService;
 
     @Inject
@@ -31,6 +29,8 @@ class JournalSyncService
 
     @Inject
     private PairingService pairingService;
+
+    private final AtomicReference<SyncStatus> lastStatus = new AtomicReference<>(SyncStatus.idle());
 
     /** Ensures a sync token exists for {@code rsn}; may call pair-init. */
     PairingState ensurePairing(String rsn)
@@ -48,6 +48,11 @@ class JournalSyncService
         return syncTokenStore.getToken(rsn);
     }
 
+    SyncStatus getLastStatus()
+    {
+        return lastStatus.get();
+    }
+
     HostedApiService.SyncResult syncLogin(
         String rsn,
         List<Map<String, Object>> playerRecord,
@@ -58,13 +63,6 @@ class JournalSyncService
         List<Map<String, Object>> combatAchievementRecords
     )
     {
-        String token = syncTokenStore.getToken(rsn);
-        if (token == null)
-        {
-            log.warn("No sync token for '{}' — sync skipped", rsn);
-            return HostedApiService.SyncResult.failed(true);
-        }
-
         // Note: profile_public is intentionally NOT sent here — the website's
         // privacy toggle is the source of truth once an account is linked.
         // It is only pushed from syncPrivacy() when the user changes the
@@ -78,38 +76,47 @@ class JournalSyncService
             .combatAchievements(combatAchievementRecords)
             .touchLastSynced(true);
 
-        HostedApiService.SyncResult result = hostedApiService.sync(rsn, token, payload);
-        if (result.isSuccess())
-        {
-            pairingService.updateLinkedState(rsn, token, result.isClaimed());
-        }
-        return result;
+        return syncWithRepair(rsn, payload, "login");
     }
 
     boolean syncSkills(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().skills(records));
+        return syncPartial(rsn, new HostedApiService.SyncPayload().skills(records), "skills");
     }
 
     boolean syncQuests(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().quests(records));
+        return syncPartial(rsn, new HostedApiService.SyncPayload().quests(records), "quests");
     }
 
     boolean syncEquipment(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().equipment(records, true));
+        return syncPartial(rsn, new HostedApiService.SyncPayload().equipment(records, true), "equipment");
     }
 
     boolean syncBank(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().bank(records, true));
+        return syncPartial(rsn, new HostedApiService.SyncPayload().bank(records, true), "bank");
     }
 
-    /** Inventory snapshot stored on players.inventory_tracked (counts with bank on the site). */
+    /** Inventory snapshot stored in player_inventory (counts with bank on the site). */
     boolean syncInventory(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().inventory(records));
+        return syncPartial(rsn, new HostedApiService.SyncPayload().inventory(records), "inventory");
+    }
+
+    /** Bank + inventory in one request so ownership data stays consistent. */
+    boolean syncBankAndInventory(
+        String rsn,
+        List<Map<String, Object>> bankRecords,
+        List<Map<String, Object>> inventoryRecords
+    )
+    {
+        return syncPartial(
+            rsn,
+            new HostedApiService.SyncPayload().bankAndInventory(bankRecords, inventoryRecords),
+            "bank+inventory"
+        );
     }
 
     /** Pushes the profile privacy flag; only called when the user flips the config toggle. */
@@ -117,16 +124,116 @@ class JournalSyncService
     {
         return syncPartial(rsn, new HostedApiService.SyncPayload()
             .profilePublic(isPublic)
-            .touchLastSynced(false));
+            .touchLastSynced(false), "privacy");
     }
 
-    private boolean syncPartial(String rsn, HostedApiService.SyncPayload payload)
+    private boolean syncPartial(String rsn, HostedApiService.SyncPayload payload, String label)
+    {
+        return syncWithRepair(rsn, payload, label).isSuccess();
+    }
+
+    private HostedApiService.SyncResult syncWithRepair(
+        String rsn,
+        HostedApiService.SyncPayload payload,
+        String label
+    )
     {
         String token = syncTokenStore.getToken(rsn);
         if (token == null)
         {
-            return false;
+            PairingState paired = pairingService.ensurePairing(rsn);
+            token = paired != null ? paired.getSyncToken() : syncTokenStore.getToken(rsn);
+            if (token == null)
+            {
+                lastStatus.set(SyncStatus.error("No sync token — open the sidebar to pair."));
+                log.warn("No sync token for '{}' — {} sync skipped", rsn, label);
+                return HostedApiService.SyncResult.failed(true, "No sync token");
+            }
         }
-        return hostedApiService.sync(rsn, token, payload).isSuccess();
+
+        HostedApiService.SyncResult result = hostedApiService.sync(rsn, token, payload);
+        if (!result.isSuccess() && result.isAuthFailed())
+        {
+            log.info("OSRS Journal: sync token stale for '{}' during {}, re-pairing", rsn, label);
+            pairingService.ensurePairing(rsn);
+            token = syncTokenStore.getToken(rsn);
+            if (token != null)
+            {
+                result = hostedApiService.sync(rsn, token, payload);
+            }
+        }
+
+        if (result.isSuccess())
+        {
+            pairingService.updateLinkedState(rsn, syncTokenStore.getToken(rsn), result.isClaimed());
+            if (result.hasWarnings())
+            {
+                String warn = String.join("; ", result.getWarnings());
+                lastStatus.set(SyncStatus.warning(label + ": " + warn));
+            }
+            else
+            {
+                lastStatus.set(SyncStatus.ok(label));
+            }
+        }
+        else
+        {
+            String err = result.getError() != null ? result.getError() : (label + " sync failed");
+            lastStatus.set(SyncStatus.error(err));
+            log.warn("OSRS Journal: {} sync failed for '{}': {}", label, rsn, err);
+        }
+        return result;
+    }
+
+    /** Compact status shown in the sidebar. */
+    static final class SyncStatus
+    {
+        enum Kind { IDLE, OK, WARNING, ERROR }
+
+        private final Kind kind;
+        private final String message;
+        private final long atMs;
+
+        private SyncStatus(Kind kind, String message)
+        {
+            this.kind = kind;
+            this.message = message;
+            this.atMs = System.currentTimeMillis();
+        }
+
+        static SyncStatus idle()
+        {
+            return new SyncStatus(Kind.IDLE, null);
+        }
+
+        static SyncStatus ok(String label)
+        {
+            return new SyncStatus(Kind.OK, "Last sync OK (" + label + ")");
+        }
+
+        static SyncStatus warning(String message)
+        {
+            return new SyncStatus(Kind.WARNING, message);
+        }
+
+        static SyncStatus error(String message)
+        {
+            return new SyncStatus(Kind.ERROR, message);
+        }
+
+        Kind getKind()
+        {
+            return kind;
+        }
+
+        String getMessage()
+        {
+            return message;
+        }
+
+        long getAtMs()
+        {
+            return atMs;
+        }
     }
 }

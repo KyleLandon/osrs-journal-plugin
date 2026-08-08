@@ -28,6 +28,7 @@ class JournalSnapshot
     private final boolean bankSyncEnabled;
     private final String pairCode;
     private final boolean accountLinked;
+    private final JournalSyncService.SyncStatus syncStatus;
 
     JournalSnapshot(
         String rsn,
@@ -40,7 +41,8 @@ class JournalSnapshot
         boolean syncEnabled,
         boolean bankSyncEnabled,
         String pairCode,
-        boolean accountLinked
+        boolean accountLinked,
+        JournalSyncService.SyncStatus syncStatus
     )
     {
         this.rsn = rsn;
@@ -54,6 +56,7 @@ class JournalSnapshot
         this.bankSyncEnabled = bankSyncEnabled;
         this.pairCode = pairCode;
         this.accountLinked = accountLinked;
+        this.syncStatus = syncStatus;
     }
 
     /** One-line status for the panel header, ordered by what the user should do next. */
@@ -63,12 +66,27 @@ class JournalSnapshot
         {
             return "Sync off — turn on Enable Sync in plugin settings (confirm the 3rd-party warning).";
         }
+        if (syncStatus != null && syncStatus.getKind() == JournalSyncService.SyncStatus.Kind.ERROR
+            && syncStatus.getMessage() != null)
+        {
+            return "Sync error: " + syncStatus.getMessage();
+        }
         if (pairCode != null && !pairCode.isEmpty() && !accountLinked)
         {
             return "Link your account: sign in at journal.osrsjournal.com and enter the code below.";
         }
+        if (syncStatus != null && syncStatus.getKind() == JournalSyncService.SyncStatus.Kind.WARNING
+            && syncStatus.getMessage() != null)
+        {
+            return "Synced with warnings — " + syncStatus.getMessage();
+        }
         if (accountLinked)
         {
+            if (syncStatus != null && syncStatus.getKind() == JournalSyncService.SyncStatus.Kind.OK
+                && syncStatus.getMessage() != null)
+            {
+                return "Linked · " + syncStatus.getMessage();
+            }
             return "Linked · syncing to OSRS Journal cloud.";
         }
         return "Waiting for pairing — click Refresh if no code appears.";
@@ -100,7 +118,8 @@ class JournalSnapshot
         net.runelite.api.Client client,
         boolean syncEnabled,
         boolean bankSyncEnabled,
-        PairingState pairing
+        PairingState pairing,
+        JournalSyncService.SyncStatus syncStatus
     )
     {
         var player = client.getLocalPlayer();
@@ -148,7 +167,8 @@ class JournalSnapshot
             syncEnabled,
             bankSyncEnabled,
             pairCode,
-            linked
+            linked,
+            syncStatus
         );
     }
 

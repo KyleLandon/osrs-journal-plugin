@@ -330,12 +330,19 @@ public class OsrsJournalPlugin extends Plugin
         }
         else if (containerId == InventoryID.BANK.getId() && config.syncBank())
         {
+            // Skip empty bank snapshots unless the bank container is actually present —
+            // a null/unloaded container would otherwise wipe cloud bank.
+            ItemContainer bankContainer = client.getItemContainer(InventoryID.BANK);
+            if (bankContainer == null)
+            {
+                return;
+            }
             List<Map<String, Object>> bank = buildBankRecords(rsn);
             List<Map<String, Object>> inv = buildInventoryRecords();
             executor.execute(() ->
             {
-                syncBank(rsn, bank);
-                syncInventory(rsn, inv);
+                journalSyncService.syncBankAndInventory(rsn, bank, inv);
+                refreshPanel();
             });
         }
         else if (containerId == InventoryID.INVENTORY.getId() && config.syncBank())
@@ -405,34 +412,14 @@ public class OsrsJournalPlugin extends Plugin
 
             executor.execute(() ->
             {
-                // Only hit pair-init when there's no stored token — for already
-                // linked accounts the sync call alone confirms the link state.
-                if (journalSyncService.getSyncToken(rsn) == null)
-                {
-                    journalSyncService.ensurePairing(rsn);
-                }
-
                 HostedApiService.SyncResult result = journalSyncService.syncLogin(
                     rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords);
 
-                if (!result.isSuccess() && result.isAuthFailed())
-                {
-                    // Stored token is stale (e.g. rotated server-side) — re-pair and retry once
-                    log.info("OSRS Journal: sync token stale for '{}', re-pairing", rsn);
-                    journalSyncService.ensurePairing(rsn);
-                    result = journalSyncService.syncLogin(
-                        rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords);
-                }
-                else if (result.isSuccess() && !result.isClaimed())
+                if (result.isSuccess() && !result.isClaimed())
                 {
                     // Data synced but the character isn't linked to a website
                     // account yet — fetch a pairing code for the sidebar.
                     journalSyncService.ensurePairing(rsn);
-                }
-
-                if (!result.isSuccess())
-                {
-                    log.warn("OSRS Journal: login sync failed for '{}'", rsn);
                 }
 
                 maybeOpenSidebarForPairing(rsn);
@@ -495,33 +482,26 @@ public class OsrsJournalPlugin extends Plugin
 
     private void syncSkills(String rsn, List<Map<String, Object>> records)
     {
-        if (!journalSyncService.syncSkills(rsn, records))
-        {
-            log.warn("OSRS Journal: skill sync failed for '{}'", rsn);
-        }
+        journalSyncService.syncSkills(rsn, records);
+        refreshPanel();
     }
 
     private void syncQuests(String rsn, List<Map<String, Object>> records)
     {
-        if (!journalSyncService.syncQuests(rsn, records))
-        {
-            log.warn("OSRS Journal: quest sync failed for '{}'", rsn);
-        }
+        journalSyncService.syncQuests(rsn, records);
+        refreshPanel();
     }
 
     private void syncEquipment(String rsn, List<Map<String, Object>> records)
     {
         journalSyncService.syncEquipment(rsn, records);
-    }
-
-    private void syncBank(String rsn, List<Map<String, Object>> records)
-    {
-        journalSyncService.syncBank(rsn, records);
+        refreshPanel();
     }
 
     private void syncInventory(String rsn, List<Map<String, Object>> records)
     {
         journalSyncService.syncInventory(rsn, records);
+        refreshPanel();
     }
 
     /** Debounce inventory pickups so we don't sync on every tick of a stack change. */
@@ -920,7 +900,8 @@ public class OsrsJournalPlugin extends Plugin
                     client,
                     config.syncEnabled(),
                     config.syncBank(),
-                    pairing
+                    pairing,
+                    journalSyncService.getLastStatus()
                 );
             }
             final JournalSnapshot captured = snapshot;

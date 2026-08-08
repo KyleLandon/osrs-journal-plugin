@@ -184,9 +184,26 @@ class OsrsJournalPanel extends PluginPanel
             sb.append("<p style='color:#22c55e;font-size:11px'>✓ Account linked.</p>");
         }
 
+        if (s.isSyncEnabled() && s.getSyncStatus() != null
+            && s.getSyncStatus().getKind() == JournalSyncService.SyncStatus.Kind.ERROR
+            && s.getSyncStatus().getMessage() != null)
+        {
+            sb.append("<p style='color:#f87171;font-size:11px'><b>Sync failed:</b> ")
+                .append(escape(s.getSyncStatus().getMessage()))
+                .append(" Click Refresh or re-open the bank to retry.</p>");
+        }
+        else if (s.isSyncEnabled() && s.getSyncStatus() != null
+            && s.getSyncStatus().getKind() == JournalSyncService.SyncStatus.Kind.WARNING
+            && s.getSyncStatus().getMessage() != null)
+        {
+            sb.append("<p style='color:#fbbf24;font-size:11px'><b>Partial sync:</b> ")
+                .append(escape(s.getSyncStatus().getMessage()))
+                .append("</p>");
+        }
+
         if (s.isSyncEnabled())
         {
-            sb.append("<p style='color:#64748b;font-size:11px'>Sync is on — skills and quests update while you play. Bank sync is ")
+            sb.append("<p style='color:#64748b;font-size:11px'>Sync is on — skills and quests update while you play. Bank &amp; inventory sync is ")
                 .append(s.isBankSyncEnabled() ? "<span style='color:#fbbf24'>on</span>" : "off")
                 .append(" — change in plugin settings. <a href='")
                 .append(JournalConstants.PRIVACY_URL)
