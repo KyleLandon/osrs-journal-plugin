@@ -173,7 +173,7 @@ node scripts/gen-quest-reqs.js
 
 This fetches all ~200 RuneLite quest names, parses each wiki `{{Quest details}}` block, and writes skill + direct quest requirements. Re-run after game updates.
 
-**Serving the webapp:** When using the plugin, click **Open full journal** in the sidebar — the jar serves the HTML locally. For standalone development, open `osrs-journal.html` through a local HTTP server (e.g. VS Code Live Server, `npx serve`, or Python `python -m http.server`) so `quest-reqs-data.json` loads via `fetch()`.
+**Serving the webapp:** When using the plugin, click **Open full journal** in the sidebar — it opens the hosted site at [journal.osrsjournal.com](https://journal.osrsjournal.com) (with a short-lived session token so your character loads without signing in). For standalone web development, open `osrs-journal.html` through a local HTTP server (e.g. VS Code Live Server, `npx serve`, or Python `python -m http.server`) so `quest-reqs-data.json` loads via `fetch()`.
 
 Manual fixes for parser gaps live in `QUEST_REQ_OVERRIDES` inside `osrs-journal.html`.
 
