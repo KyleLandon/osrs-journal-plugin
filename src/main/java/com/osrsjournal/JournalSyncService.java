@@ -89,6 +89,21 @@ class JournalSyncService
         return syncPartial(rsn, new HostedApiService.SyncPayload().quests(records), "quests");
     }
 
+    boolean syncDiariesAndCombatAchievements(
+        String rsn,
+        List<Map<String, Object>> diaryRecords,
+        List<Map<String, Object>> combatAchievementRecords
+    )
+    {
+        return syncPartial(
+            rsn,
+            new HostedApiService.SyncPayload()
+                .diaries(diaryRecords)
+                .combatAchievements(combatAchievementRecords),
+            "diaries+CA"
+        );
+    }
+
     boolean syncEquipment(String rsn, List<Map<String, Object>> records)
     {
         return syncPartial(rsn, new HostedApiService.SyncPayload().equipment(records, true), "equipment");
@@ -234,6 +249,30 @@ class JournalSyncService
         long getAtMs()
         {
             return atMs;
+        }
+
+        /** Relative age for sidebar, e.g. "just now", "2m ago". */
+        String getAgeLabel()
+        {
+            if (kind == Kind.IDLE)
+            {
+                return null;
+            }
+            long secs = Math.max(0, (System.currentTimeMillis() - atMs) / 1000L);
+            if (secs < 15)
+            {
+                return "just now";
+            }
+            if (secs < 60)
+            {
+                return secs + "s ago";
+            }
+            long mins = secs / 60;
+            if (mins < 60)
+            {
+                return mins + "m ago";
+            }
+            return (mins / 60) + "h ago";
         }
     }
 }

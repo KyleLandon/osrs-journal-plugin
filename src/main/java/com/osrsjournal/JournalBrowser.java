@@ -62,10 +62,18 @@ class JournalBrowser
         }
         LinkBrowser.browse(url);
 
+        if (!config.syncEnabled())
+        {
+            return "Opened journal (sync off — sign in on the site for full data).";
+        }
         if (sessionFailed)
         {
             log.warn("OSRS Journal: live session unavailable for '{}' — opened profile view instead", rsn);
             return "Couldn't start a live session — opened your profile instead.";
+        }
+        if (sessionToken != null && !sessionToken.isEmpty())
+        {
+            return "Journal opened with a live session (~5 min).";
         }
         return "Journal opened in your browser.";
     }

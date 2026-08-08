@@ -4,9 +4,12 @@ import com.google.common.collect.ImmutableMap;
 import com.google.inject.Binder;
 import com.google.inject.Provides;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +32,7 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
+import net.runelite.api.events.VarbitChanged;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
@@ -65,13 +69,16 @@ import net.runelite.client.util.ImageUtil;
     @PluginDescriptor(
     name = "OSRS Journal",
     configName = "osrsjournal",
-    description = "Opt-in sync of your character to journal.osrsjournal.com — stats, quests and gear with a sidebar summary. Bank sync is a separate opt-in.",
+    description = "Opt-in sync of your character to journal.osrsjournal.com — stats, quests, diaries, gear, and a sidebar summary. Bank & inventory sync is a separate opt-in.",
     tags = {"sync", "cloud", "stats", "quests", "journal", "tracker"}
 )
 public class OsrsJournalPlugin extends Plugin
 {
     // How often to poll for quest state changes (game ticks — 1 tick ≈ 0.6 s)
     private static final int QUEST_POLL_TICKS = 100; // ~1 minute
+
+    /** Diary + combat-achievement varbits we sync mid-session via {@link VarbitChanged}. */
+    private static final Set<Integer> TRACKED_PROGRESS_VARBITS = buildTrackedProgressVarbits();
 
     @Inject
     private Client client;
@@ -116,6 +123,9 @@ public class OsrsJournalPlugin extends Plugin
     /** Debounce handle for tracked-inventory sync (Marks of grace / Graceful). */
     private ScheduledFuture<?> inventorySyncFuture;
 
+    /** Debounce handle for diary / combat achievement sync after varbit changes. */
+    private ScheduledFuture<?> progressSyncFuture;
+
     /** Snapshot of quest states used to detect changes between polls. */
     private final Map<Quest, QuestState> lastQuestStates = new EnumMap<>(Quest.class);
 
@@ -139,6 +149,8 @@ public class OsrsJournalPlugin extends Plugin
         panel = injector.getInstance(OsrsJournalPanel.class);
         panel.init();
         panel.setRefreshListener(this::manualRefresh);
+        panel.setNewCodeListener(this::requestNewPairingCode);
+        panel.setTickListener(this::refreshPanel);
 
         BufferedImage icon = ImageUtil.loadImageResource(getClass(), "journal_icon.png");
         if (icon == null)
@@ -167,9 +179,15 @@ public class OsrsJournalPlugin extends Plugin
     {
         cancelSkillDebounce();
         cancelInventoryDebounce();
+        cancelProgressDebounce();
         lastQuestStates.clear();
         currentRsn = null;
+        openedSidebarOnce = false;
         clientToolbar.removeNavigation(navButton);
+        if (panel != null)
+        {
+            panel.disposeTimers();
+        }
         panel = null;
         navButton = null;
         log.debug("OSRS Journal stopped");
@@ -204,8 +222,10 @@ public class OsrsJournalPlugin extends Plugin
                 currentRsn = null;
                 lastQuestStates.clear();
                 pairingService.clearState();
+                openedSidebarOnce = false; // next character can get the pairing sidebar
                 cancelSkillDebounce();
                 cancelInventoryDebounce();
+                cancelProgressDebounce();
                 SwingUtilities.invokeLater(() ->
                 {
                     if (panel != null)
@@ -241,8 +261,16 @@ public class OsrsJournalPlugin extends Plugin
             else
             {
                 cancelSkillDebounce();
+                cancelProgressDebounce();
                 refreshPanel();
             }
+            return;
+        }
+
+        if ("syncBank".equals(event.getKey()))
+        {
+            // Surface the "bank on / sync off" trap immediately in the sidebar.
+            refreshPanel();
             return;
         }
 
@@ -373,6 +401,24 @@ public class OsrsJournalPlugin extends Plugin
         }
     }
 
+    /**
+     * Mid-session diary / combat achievement updates. Debounced so a burst of
+     * varbit writes (e.g. claiming a diary) becomes one sync.
+     */
+    @Subscribe
+    public void onVarbitChanged(VarbitChanged event)
+    {
+        if (!config.syncEnabled() || currentRsn == null)
+        {
+            return;
+        }
+        if (!TRACKED_PROGRESS_VARBITS.contains(event.getVarbitId()))
+        {
+            return;
+        }
+        scheduleProgressSync(currentRsn);
+    }
+
     // ── Data collection (client thread only) ──────────────────────────────────
 
     /**
@@ -391,6 +437,12 @@ public class OsrsJournalPlugin extends Plugin
             String rsn = localPlayer.getName();
             if (rsn == null || rsn.isEmpty()) return;
 
+            // Switching characters without a full logout — reset pairing sidebar prompt.
+            if (currentRsn != null && !currentRsn.equals(rsn))
+            {
+                openedSidebarOnce = false;
+                pairingService.clearState();
+            }
             currentRsn = rsn;
 
             // Always refresh the local sidebar; network only after Hub opt-in.
@@ -504,6 +556,12 @@ public class OsrsJournalPlugin extends Plugin
         refreshPanel();
     }
 
+    private void syncDiariesAndCombat(String rsn, List<Map<String, Object>> diaries, List<Map<String, Object>> cas)
+    {
+        journalSyncService.syncDiariesAndCombatAchievements(rsn, diaries, cas);
+        refreshPanel();
+    }
+
     /** Debounce inventory pickups so we don't sync on every tick of a stack change. */
     private void scheduleInventorySync(String rsn)
     {
@@ -517,6 +575,24 @@ public class OsrsJournalPlugin extends Plugin
                 }
                 List<Map<String, Object>> inv = buildInventoryRecords();
                 executor.execute(() -> syncInventory(rsn, inv));
+            }),
+            2, TimeUnit.SECONDS);
+    }
+
+    private void scheduleProgressSync(String rsn)
+    {
+        cancelProgressDebounce();
+        progressSyncFuture = executor.schedule(() ->
+            clientThread.invoke(() ->
+            {
+                if (!config.syncEnabled() || !rsn.equals(currentRsn)
+                    || client.getGameState() != GameState.LOGGED_IN)
+                {
+                    return;
+                }
+                List<Map<String, Object>> diaries = buildDiaryRecords(rsn);
+                List<Map<String, Object>> cas = buildCombatAchievementRecords(rsn);
+                executor.execute(() -> syncDiariesAndCombat(rsn, diaries, cas));
             }),
             2, TimeUnit.SECONDS);
     }
@@ -854,6 +930,15 @@ public class OsrsJournalPlugin extends Plugin
         }
     }
 
+    private void cancelProgressDebounce()
+    {
+        if (progressSyncFuture != null && !progressSyncFuture.isDone())
+        {
+            progressSyncFuture.cancel(false);
+            progressSyncFuture = null;
+        }
+    }
+
     /**
      * Sidebar Refresh button: retries pairing if there's no code yet (e.g. the
      * backend was unreachable at login), then redraws the panel.
@@ -871,13 +956,37 @@ public class OsrsJournalPlugin extends Plugin
         {
             // pair-init is idempotent: reuses the sync token and reports the
             // server-side linked state, issuing a fresh code if unclaimed.
-            // Skip it entirely once the account is confirmed linked.
+            // Also refresh when the local code countdown has expired.
             PairingState state = journalSyncService.getPairingState(rsn);
-            if (state == null || !state.isLinked())
+            if (state == null || !state.isLinked() || state.isCodeExpired())
             {
                 journalSyncService.ensurePairing(rsn);
             }
             refreshPanel();
+        });
+    }
+
+    /** Sidebar "New code" — always hits pair-init for a fresh code. */
+    private void requestNewPairingCode()
+    {
+        final String rsn = currentRsn;
+        if (rsn == null || !config.syncEnabled())
+        {
+            if (panel != null)
+            {
+                SwingUtilities.invokeLater(() -> panel.onNewCodeFinished(false));
+            }
+            return;
+        }
+        executor.execute(() ->
+        {
+            PairingState state = journalSyncService.ensurePairing(rsn);
+            boolean ok = state != null && state.needsPairingDisplay();
+            refreshPanel();
+            if (panel != null)
+            {
+                SwingUtilities.invokeLater(() -> panel.onNewCodeFinished(ok || (state != null && state.isLinked())));
+            }
         });
     }
 
@@ -900,6 +1009,7 @@ public class OsrsJournalPlugin extends Plugin
                     client,
                     config.syncEnabled(),
                     config.syncBank(),
+                    config.publicProfile(),
                     pairing,
                     journalSyncService.getLastStatus()
                 );
@@ -917,5 +1027,35 @@ public class OsrsJournalPlugin extends Plugin
     private static String nowIso()
     {
         return java.time.Instant.now().toString();
+    }
+
+    private static Set<Integer> buildTrackedProgressVarbits()
+    {
+        Set<Integer> ids = new HashSet<>();
+        int[] diary = {
+            Varbits.DIARY_ARDOUGNE_EASY, Varbits.DIARY_ARDOUGNE_MEDIUM, Varbits.DIARY_ARDOUGNE_HARD, Varbits.DIARY_ARDOUGNE_ELITE,
+            Varbits.DIARY_DESERT_EASY, Varbits.DIARY_DESERT_MEDIUM, Varbits.DIARY_DESERT_HARD, Varbits.DIARY_DESERT_ELITE,
+            Varbits.DIARY_FALADOR_EASY, Varbits.DIARY_FALADOR_MEDIUM, Varbits.DIARY_FALADOR_HARD, Varbits.DIARY_FALADOR_ELITE,
+            Varbits.DIARY_FREMENNIK_EASY, Varbits.DIARY_FREMENNIK_MEDIUM, Varbits.DIARY_FREMENNIK_HARD, Varbits.DIARY_FREMENNIK_ELITE,
+            Varbits.DIARY_KANDARIN_EASY, Varbits.DIARY_KANDARIN_MEDIUM, Varbits.DIARY_KANDARIN_HARD, Varbits.DIARY_KANDARIN_ELITE,
+            Varbits.DIARY_KARAMJA_EASY, Varbits.DIARY_KARAMJA_MEDIUM, Varbits.DIARY_KARAMJA_HARD, Varbits.DIARY_KARAMJA_ELITE,
+            Varbits.DIARY_KOUREND_EASY, Varbits.DIARY_KOUREND_MEDIUM, Varbits.DIARY_KOUREND_HARD, Varbits.DIARY_KOUREND_ELITE,
+            Varbits.DIARY_LUMBRIDGE_EASY, Varbits.DIARY_LUMBRIDGE_MEDIUM, Varbits.DIARY_LUMBRIDGE_HARD, Varbits.DIARY_LUMBRIDGE_ELITE,
+            Varbits.DIARY_MORYTANIA_EASY, Varbits.DIARY_MORYTANIA_MEDIUM, Varbits.DIARY_MORYTANIA_HARD, Varbits.DIARY_MORYTANIA_ELITE,
+            Varbits.DIARY_VARROCK_EASY, Varbits.DIARY_VARROCK_MEDIUM, Varbits.DIARY_VARROCK_HARD, Varbits.DIARY_VARROCK_ELITE,
+            Varbits.DIARY_WESTERN_EASY, Varbits.DIARY_WESTERN_MEDIUM, Varbits.DIARY_WESTERN_HARD, Varbits.DIARY_WESTERN_ELITE,
+            Varbits.DIARY_WILDERNESS_EASY, Varbits.DIARY_WILDERNESS_MEDIUM, Varbits.DIARY_WILDERNESS_HARD, Varbits.DIARY_WILDERNESS_ELITE,
+        };
+        for (int id : diary)
+        {
+            ids.add(id);
+        }
+        ids.add(Varbits.COMBAT_ACHIEVEMENT_TIER_EASY);
+        ids.add(Varbits.COMBAT_ACHIEVEMENT_TIER_MEDIUM);
+        ids.add(Varbits.COMBAT_ACHIEVEMENT_TIER_HARD);
+        ids.add(Varbits.COMBAT_ACHIEVEMENT_TIER_ELITE);
+        ids.add(Varbits.COMBAT_ACHIEVEMENT_TIER_MASTER);
+        ids.add(Varbits.COMBAT_ACHIEVEMENT_TIER_GRANDMASTER);
+        return Collections.unmodifiableSet(ids);
     }
 }

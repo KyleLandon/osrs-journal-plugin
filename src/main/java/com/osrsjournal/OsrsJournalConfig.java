@@ -4,11 +4,12 @@ import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
+import net.runelite.client.config.Range;
 
 /**
  * Plugin settings. Plugin Hub requires any third-party network feature to be
  * <b>opt-in</b> (disabled by default) with the standard {@code warning} text.
- * Bank sync is a second opt-in on top of that.
+ * Bank &amp; inventory sync is a second opt-in on top of Enable Sync.
  * The Advanced section only matters for self-hosted backends and stays collapsed.
  */
 @ConfigGroup("osrsjournal")
@@ -16,7 +17,7 @@ public interface OsrsJournalConfig extends Config
 {
     @ConfigSection(
         name = "Sync Options",
-        description = "Control what data is synced and when",
+        description = "Control what data is synced and when. Enable Sync must be on before anything is sent.",
         position = 0
     )
     String syncSection = "sync";
@@ -24,8 +25,10 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "syncEnabled",
         name = "Enable Sync",
-        description = "Opt in to sync your character (skills, quests, worn gear, diaries, combat achievements) "
-            + "to journal.osrsjournal.com. Off by default — enable this, then pair the character on the website.",
+        description = "Master switch. When on, syncs skills, quests, worn gear, diaries, and combat "
+            + "achievements to journal.osrsjournal.com while you play. Off by default — enable this, "
+            + "confirm the warning, then enter the pairing code from the sidebar on the website. "
+            + "Bank & Inventory is a separate toggle below and does nothing while this is off.",
         // Exact wording required by RuneLite Plugin Hub / example-plugin AGENTS.md
         warning = "This feature submits your IP address to a 3rd-party server not controlled or verified by RuneLite developers",
         section = syncSection,
@@ -40,9 +43,10 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "syncBank",
         name = "Sync Bank & Inventory",
-        description = "When enabled (and sync is on), sends your bank to journal.osrsjournal.com when you open it, "
-            + "and keeps your inventory in sync so owned items count whether they are in the bank or your bag. "
-            + "Only you can see this data when signed in on the website.",
+        description = "Requires Enable Sync. When on, uploads your full bank whenever you open it, "
+            + "and keeps your inventory snapshot updated so items count whether they are banked or "
+            + "in your bag (gear planner, Graceful marks, wealth, etc.). Only you can see this when "
+            + "signed in — public profiles never include bank or inventory.",
         warning = "This feature submits your IP address to a 3rd-party server not controlled or verified by RuneLite developers",
         section = syncSection,
         position = 2
@@ -55,8 +59,9 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "publicProfile",
         name = "Public Profile",
-        description = "Skills and quests visible to others on journal.osrsjournal.com (like Wise Old Man). "
-            + "Bank and worn gear stay private.",
+        description = "When linked, skills and quests are visible to others on journal.osrsjournal.com "
+            + "(like Wise Old Man). Bank, inventory, and worn gear stay private either way. "
+            + "Requires Enable Sync for the plugin to push this setting.",
         section = syncSection,
         position = 3
     )
@@ -68,10 +73,11 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "skillDebounceSeconds",
         name = "Skill Debounce (s)",
-        description = "Seconds to wait after the last XP gain before syncing skills",
+        description = "Seconds to wait after the last XP gain before syncing skills (avoids spam while training).",
         section = syncSection,
         position = 4
     )
+    @Range(min = 1, max = 60)
     default int skillDebounceSeconds()
     {
         return 3;
@@ -79,7 +85,8 @@ public interface OsrsJournalConfig extends Config
 
     @ConfigSection(
         name = "Advanced",
-        description = "Self-hosted deployments only — leave blank for journal.osrsjournal.com",
+        description = "Self-hosted deployments only — leave blank for journal.osrsjournal.com. "
+            + "Only point API override at a server you trust.",
         position = 5,
         closedByDefault = true
     )
@@ -88,7 +95,8 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "apiBaseUrl",
         name = "API override",
-        description = "Leave blank to use the built-in OSRS Journal cloud",
+        description = "Leave blank to use the built-in OSRS Journal cloud. Self-hosters only — "
+            + "must be a trusted HTTPS Edge Functions base URL.",
         section = advancedSection,
         position = 6
     )

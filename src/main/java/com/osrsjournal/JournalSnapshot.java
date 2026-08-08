@@ -26,8 +26,11 @@ class JournalSnapshot
     private final List<String> recentQuests;
     private final boolean syncEnabled;
     private final boolean bankSyncEnabled;
+    private final boolean publicProfileEnabled;
     private final String pairCode;
     private final boolean accountLinked;
+    private final boolean pairCodeExpired;
+    private final String pairExpiryLabel;
     private final JournalSyncService.SyncStatus syncStatus;
 
     JournalSnapshot(
@@ -40,8 +43,11 @@ class JournalSnapshot
         List<String> recentQuests,
         boolean syncEnabled,
         boolean bankSyncEnabled,
+        boolean publicProfileEnabled,
         String pairCode,
         boolean accountLinked,
+        boolean pairCodeExpired,
+        String pairExpiryLabel,
         JournalSyncService.SyncStatus syncStatus
     )
     {
@@ -54,8 +60,11 @@ class JournalSnapshot
         this.recentQuests = recentQuests;
         this.syncEnabled = syncEnabled;
         this.bankSyncEnabled = bankSyncEnabled;
+        this.publicProfileEnabled = publicProfileEnabled;
         this.pairCode = pairCode;
         this.accountLinked = accountLinked;
+        this.pairCodeExpired = pairCodeExpired;
+        this.pairExpiryLabel = pairExpiryLabel;
         this.syncStatus = syncStatus;
     }
 
@@ -71,9 +80,14 @@ class JournalSnapshot
         {
             return "Sync error: " + syncStatus.getMessage();
         }
+        if (pairCodeExpired)
+        {
+            return "Pairing code expired — click New code, then enter it on the website.";
+        }
         if (pairCode != null && !pairCode.isEmpty() && !accountLinked)
         {
-            return "Link your account: sign in at journal.osrsjournal.com and enter the code below.";
+            String expiry = pairExpiryLabel != null ? " (" + pairExpiryLabel + ")" : "";
+            return "Link your account on journal.osrsjournal.com" + expiry;
         }
         if (syncStatus != null && syncStatus.getKind() == JournalSyncService.SyncStatus.Kind.WARNING
             && syncStatus.getMessage() != null)
@@ -82,14 +96,20 @@ class JournalSnapshot
         }
         if (accountLinked)
         {
-            if (syncStatus != null && syncStatus.getKind() == JournalSyncService.SyncStatus.Kind.OK
-                && syncStatus.getMessage() != null)
+            if (syncStatus != null && syncStatus.getKind() == JournalSyncService.SyncStatus.Kind.OK)
             {
-                return "Linked · " + syncStatus.getMessage();
+                String age = syncStatus.getAgeLabel();
+                return "Linked · " + syncStatus.getMessage() + (age != null ? " · " + age : "");
             }
             return "Linked · syncing to OSRS Journal cloud.";
         }
-        return "Waiting for pairing — click Refresh if no code appears.";
+        return "Waiting for pairing — click New code if none appears.";
+    }
+
+    /** True when bank toggle is on but master sync is off (no-op trap). */
+    boolean isBankSyncIneffective()
+    {
+        return bankSyncEnabled && !syncEnabled;
     }
 
     static class SkillRow
@@ -118,6 +138,7 @@ class JournalSnapshot
         net.runelite.api.Client client,
         boolean syncEnabled,
         boolean bankSyncEnabled,
+        boolean publicProfileEnabled,
         PairingState pairing,
         JournalSyncService.SyncStatus syncStatus
     )
@@ -155,6 +176,8 @@ class JournalSnapshot
 
         String pairCode = pairing != null && pairing.needsPairingDisplay() ? pairing.getPairCode() : null;
         boolean linked = pairing != null && pairing.isLinked();
+        boolean expired = pairing != null && pairing.isCodeExpired();
+        String expiryLabel = pairing != null ? pairing.getExpiryLabel() : null;
 
         return new JournalSnapshot(
             rsn,
@@ -166,8 +189,11 @@ class JournalSnapshot
             recent,
             syncEnabled,
             bankSyncEnabled,
+            publicProfileEnabled,
             pairCode,
             linked,
+            expired,
+            expiryLabel,
             syncStatus
         );
     }

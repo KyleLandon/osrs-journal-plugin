@@ -11,6 +11,7 @@ import javax.swing.JButton;
 import javax.swing.JEditorPane;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
@@ -33,6 +34,10 @@ class OsrsJournalPanel extends PluginPanel
     private final JournalBrowser journalBrowser;
     private final ScheduledExecutorService executor;
     private JButton openFullButton;
+    private JButton newCodeButton;
+    private JButton refreshButton;
+    private JournalSnapshot lastSnapshot;
+    private Timer countdownTimer;
 
     @Inject
     OsrsJournalPanel(JournalBrowser journalBrowser, ScheduledExecutorService executor)
@@ -72,13 +77,19 @@ class OsrsJournalPanel extends PluginPanel
         openFullButton = new JButton("Open full journal");
         openFullButton.addActionListener(this::openFullJournal);
 
-        JButton refresh = new JButton("Refresh");
-        refresh.addActionListener(e -> requestRefresh());
+        newCodeButton = new JButton("New code");
+        newCodeButton.setToolTipText("Request a fresh pairing code from the server");
+        newCodeButton.addActionListener(e -> requestNewCode());
+        newCodeButton.setVisible(false);
 
-        JPanel buttons = new JPanel(new GridLayout(2, 1, 0, 6));
+        refreshButton = new JButton("Refresh");
+        refreshButton.addActionListener(e -> requestRefresh());
+
+        JPanel buttons = new JPanel(new GridLayout(0, 1, 0, 6));
         buttons.setBackground(ColorScheme.DARK_GRAY_COLOR);
         buttons.add(openFullButton);
-        buttons.add(refresh);
+        buttons.add(newCodeButton);
+        buttons.add(refreshButton);
 
         JPanel north = new JPanel(new BorderLayout(0, 6));
         north.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -88,19 +99,46 @@ class OsrsJournalPanel extends PluginPanel
         add(north, BorderLayout.NORTH);
         add(summaryPane, BorderLayout.CENTER);
         add(buttons, BorderLayout.SOUTH);
+
+        // Keep pairing countdown / sync "Xm ago" labels fresh without a full client read.
+        countdownTimer = new Timer(15_000, e ->
+        {
+            if (lastSnapshot != null && tickListener != null)
+            {
+                tickListener.run();
+            }
+        });
+        countdownTimer.setRepeats(true);
+        countdownTimer.start();
+    }
+
+    void disposeTimers()
+    {
+        if (countdownTimer != null)
+        {
+            countdownTimer.stop();
+            countdownTimer = null;
+        }
     }
 
     void updateSummary(JournalSnapshot snapshot)
     {
+        lastSnapshot = snapshot;
         if (snapshot == null)
         {
             statusLabel.setText("Log in to view your journal.");
             summaryPane.setText(buildHtml(null));
+            newCodeButton.setVisible(false);
             return;
         }
 
         statusLabel.setText(snapshot.getStatusText());
         summaryPane.setText(buildHtml(snapshot));
+        boolean showNewCode = snapshot.isSyncEnabled()
+            && !snapshot.isAccountLinked()
+            && (snapshot.getPairCode() != null || snapshot.isPairCodeExpired());
+        newCodeButton.setVisible(showNewCode);
+        newCodeButton.setText(snapshot.isPairCodeExpired() ? "New code (expired)" : "New code");
     }
 
     private String currentRsn;
@@ -128,18 +166,50 @@ class OsrsJournalPanel extends PluginPanel
 
     private void requestRefresh()
     {
-        // Plugin listens via panel callback set at startup
         if (refreshListener != null)
         {
             refreshListener.run();
         }
     }
 
+    private void requestNewCode()
+    {
+        if (newCodeListener != null)
+        {
+            newCodeButton.setEnabled(false);
+            statusLabel.setText("Requesting a new pairing code...");
+            newCodeListener.run();
+        }
+    }
+
+    /** Called after a New code request finishes (success or fail). */
+    void onNewCodeFinished(boolean ok)
+    {
+        newCodeButton.setEnabled(true);
+        if (!ok)
+        {
+            statusLabel.setText("Couldn't get a new code — try again in a moment.");
+        }
+    }
+
     private Runnable refreshListener;
+    private Runnable newCodeListener;
+    private Runnable tickListener;
 
     void setRefreshListener(Runnable refreshListener)
     {
         this.refreshListener = refreshListener;
+    }
+
+    void setNewCodeListener(Runnable newCodeListener)
+    {
+        this.newCodeListener = newCodeListener;
+    }
+
+    /** Lightweight redraw (pairing countdown / sync age). */
+    void setTickListener(Runnable tickListener)
+    {
+        this.tickListener = tickListener;
     }
 
     private static String buildHtml(JournalSnapshot s)
@@ -158,6 +228,21 @@ class OsrsJournalPanel extends PluginPanel
             .append(" · QP ").append(s.getQuestPoints())
             .append(" · Total ").append(s.getTotalLevel()).append("</p>");
 
+        // Opt-in checklist
+        sb.append("<p style='color:#64748b;font-size:11px;margin-top:6px'>")
+            .append(optLine("Enable Sync", s.isSyncEnabled(), true))
+            .append("<br/>")
+            .append(optLine("Bank &amp; Inventory", s.isBankSyncEnabled(), s.isSyncEnabled()))
+            .append("<br/>")
+            .append(optLine("Public profile", s.isPublicProfileEnabled(), s.isSyncEnabled()))
+            .append("</p>");
+
+        if (s.isBankSyncIneffective())
+        {
+            sb.append("<p style='color:#fbbf24;font-size:11px'>Bank &amp; Inventory is on, but <b>Enable Sync</b> "
+                + "is off — nothing is uploaded until you enable Sync.</p>");
+        }
+
         if (!s.isSyncEnabled())
         {
             sb.append("<hr/>");
@@ -169,15 +254,27 @@ class OsrsJournalPanel extends PluginPanel
         }
         else if (s.getPairCode() != null && !s.getPairCode().isEmpty() && !s.isAccountLinked())
         {
-            // Pairing call-to-action goes first — it must never be pushed out of view.
             sb.append("<hr/>");
             sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Link account</b></p>");
-            sb.append("<p style='color:#f1f5f9;font-size:18px;letter-spacing:2px'><b>")
-                .append(escape(s.getPairCode())).append("</b></p>");
+            if (s.isPairCodeExpired())
+            {
+                sb.append("<p style='color:#f87171;font-size:12px'><b>Code expired</b> — click <b>New code</b> below.</p>");
+                sb.append("<p style='color:#64748b;font-size:11px'>Old code: <span style='letter-spacing:1px'>")
+                    .append(escape(s.getPairCode())).append("</span></p>");
+            }
+            else
+            {
+                sb.append("<p style='color:#f1f5f9;font-size:18px;letter-spacing:2px'><b>")
+                    .append(escape(s.getPairCode())).append("</b></p>");
+                if (s.getPairExpiryLabel() != null)
+                {
+                    sb.append("<p style='color:#fbbf24;font-size:11px'>")
+                        .append(escape(s.getPairExpiryLabel())).append("</p>");
+                }
+            }
             sb.append("<p style='color:#64748b;font-size:11px'>1. Sign in at "
                 + "<a href='" + JournalConstants.WEB_APP_URL + "' style='color:#60a5fa'>journal.osrsjournal.com</a><br/>"
-                + "2. Enter this code under <b>Link character</b><br/>"
-                + "Code expires in ~10 minutes.</p>");
+                + "2. Enter this code under <b>Link character</b></p>");
         }
         else if (s.isAccountLinked())
         {
@@ -185,29 +282,42 @@ class OsrsJournalPanel extends PluginPanel
         }
 
         if (s.isSyncEnabled() && s.getSyncStatus() != null
-            && s.getSyncStatus().getKind() == JournalSyncService.SyncStatus.Kind.ERROR
-            && s.getSyncStatus().getMessage() != null)
+            && s.getSyncStatus().getKind() != JournalSyncService.SyncStatus.Kind.IDLE)
         {
-            sb.append("<p style='color:#f87171;font-size:11px'><b>Sync failed:</b> ")
-                .append(escape(s.getSyncStatus().getMessage()))
-                .append(" Click Refresh or re-open the bank to retry.</p>");
-        }
-        else if (s.isSyncEnabled() && s.getSyncStatus() != null
-            && s.getSyncStatus().getKind() == JournalSyncService.SyncStatus.Kind.WARNING
-            && s.getSyncStatus().getMessage() != null)
-        {
-            sb.append("<p style='color:#fbbf24;font-size:11px'><b>Partial sync:</b> ")
-                .append(escape(s.getSyncStatus().getMessage()))
-                .append("</p>");
+            JournalSyncService.SyncStatus st = s.getSyncStatus();
+            String color = st.getKind() == JournalSyncService.SyncStatus.Kind.ERROR ? "#f87171"
+                : st.getKind() == JournalSyncService.SyncStatus.Kind.WARNING ? "#fbbf24" : "#94a3b8";
+            sb.append("<p style='color:").append(color).append(";font-size:11px'>");
+            if (st.getKind() == JournalSyncService.SyncStatus.Kind.ERROR)
+            {
+                sb.append("<b>Sync failed:</b> ");
+            }
+            else if (st.getKind() == JournalSyncService.SyncStatus.Kind.WARNING)
+            {
+                sb.append("<b>Partial sync:</b> ");
+            }
+            if (st.getMessage() != null)
+            {
+                sb.append(escape(st.getMessage()));
+            }
+            if (st.getAgeLabel() != null)
+            {
+                sb.append(" <span style='color:#64748b'>(").append(escape(st.getAgeLabel())).append(")</span>");
+            }
+            if (st.getKind() == JournalSyncService.SyncStatus.Kind.ERROR)
+            {
+                sb.append(" — click Refresh or re-open the bank to retry.");
+            }
+            sb.append("</p>");
         }
 
         if (s.isSyncEnabled())
         {
-            sb.append("<p style='color:#64748b;font-size:11px'>Sync is on — skills and quests update while you play. Bank &amp; inventory sync is ")
-                .append(s.isBankSyncEnabled() ? "<span style='color:#fbbf24'>on</span>" : "off")
-                .append(" — change in plugin settings. <a href='")
-                .append(JournalConstants.PRIVACY_URL)
-                .append("' style='color:#60a5fa'>Privacy</a></p>");
+            sb.append("<p style='color:#64748b;font-size:11px'>")
+                .append("<a href='").append(JournalConstants.PRIVACY_URL)
+                .append("' style='color:#60a5fa'>Privacy</a>")
+                .append(" · Open full journal uses a short-lived live session when synced.")
+                .append("</p>");
         }
 
         sb.append("<hr/>");
@@ -232,8 +342,21 @@ class OsrsJournalPanel extends PluginPanel
             }
             sb.append("</ul>");
         }
-        sb.append("<p style='color:#64748b;font-size:11px'>Full quest reqs, gear, and export live in the browser journal.</p>");
+        sb.append("<p style='color:#64748b;font-size:11px'>Diaries, combat achievements, gear, and export live in the browser journal.</p>");
         return htmlWrap(sb.toString());
+    }
+
+    private static String optLine(String label, boolean on, boolean effective)
+    {
+        if (!effective && on)
+        {
+            return "<span style='color:#fbbf24'>● " + label + " (needs Enable Sync)</span>";
+        }
+        if (on)
+        {
+            return "<span style='color:#22c55e'>● " + label + " on</span>";
+        }
+        return "<span style='color:#64748b'>○ " + label + " off</span>";
     }
 
     private static String htmlWrap(String body)
