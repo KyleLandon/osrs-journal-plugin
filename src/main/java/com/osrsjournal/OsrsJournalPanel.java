@@ -342,7 +342,8 @@ class OsrsJournalPanel extends PluginPanel
             }
             sb.append("</ul>");
         }
-        sb.append("<p style='color:#64748b;font-size:11px'>Diaries, combat achievements, gear, and export live in the browser journal.</p>");
+        sb.append("<p style='color:#64748b;font-size:11px'>Diaries, combat achievements, gear, collection log "
+            + "(open pages in-game to sync), and export live in the browser journal.</p>");
         return htmlWrap(sb.toString());
     }
 

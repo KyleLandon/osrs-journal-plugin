@@ -134,6 +134,23 @@ class JournalSyncService
         );
     }
 
+    /**
+     * Collection-log pages opened in-game. Each map is
+     * {@code page} + {@code items} (list of item_id / item_name / quantity).
+     */
+    boolean syncCollectionLog(String rsn, List<Map<String, Object>> pages)
+    {
+        if (pages == null || pages.isEmpty())
+        {
+            return true;
+        }
+        return syncPartial(
+            rsn,
+            new HostedApiService.SyncPayload().collectionLogPages(pages),
+            "collection log"
+        );
+    }
+
     /** Pushes the profile privacy flag; only called when the user flips the config toggle. */
     boolean syncPrivacy(String rsn, boolean isPublic)
     {

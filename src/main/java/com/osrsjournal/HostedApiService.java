@@ -27,7 +27,7 @@ import okhttp3.Response;
  * the service role. Endpoints used:
  * <ul>
  *   <li>{@code pair-init} — issue/reuse a sync token + pairing code for an RSN</li>
- *   <li>{@code sync} — batched upsert of skills/quests/equipment/bank/inventory</li>
+ *   <li>{@code sync} — batched upsert of skills/quests/equipment/bank/inventory/collection log</li>
  *   <li>{@code localhost-session} — short-lived read token for "Open full journal"</li>
  * </ul>
  *
@@ -151,9 +151,9 @@ public class HostedApiService
 
     /**
      * Posts a batched sync payload. One request carries any combination of
-     * players/skills/quests/equipment/bank/inventory rows — the server upserts
-     * them in FK-safe order and answers with {@code claimed}, which doubles as a
-     * free "is this character linked yet?" check on every sync.
+     * players/skills/quests/equipment/bank/inventory/collection-log rows — the
+     * server upserts them in FK-safe order and answers with {@code claimed},
+     * which doubles as a free "is this character linked yet?" check on every sync.
      */
     SyncResult sync(String rsn, String syncToken, SyncPayload payload)
     {
@@ -343,6 +343,8 @@ public class HostedApiService
         private List<Map<String, Object>> player_combat_achievements;
         /** Inventory snapshot → player_inventory (counted with bank on the site). */
         private List<Map<String, Object>> inventory_tracked;
+        /** Collection-log pages → player_collection_log (atomic replace per page). */
+        private List<Map<String, Object>> collection_log_pages;
         private boolean replace_equipment;
         private boolean replace_bank;
         private boolean replace_inventory;
@@ -416,6 +418,16 @@ public class HostedApiService
         SyncPayload combatAchievements(List<Map<String, Object>> records)
         {
             this.player_combat_achievements = records;
+            return this;
+        }
+
+        /**
+         * Collection-log page snapshots. Each entry is
+         * {@code { page, items: [{ item_id, item_name, quantity }] }}.
+         */
+        SyncPayload collectionLogPages(List<Map<String, Object>> pages)
+        {
+            this.collection_log_pages = pages != null ? pages : Collections.emptyList();
             return this;
         }
 

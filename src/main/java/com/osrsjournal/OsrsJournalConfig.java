@@ -25,8 +25,9 @@ public interface OsrsJournalConfig extends Config
     @ConfigItem(
         keyName = "syncEnabled",
         name = "Enable Sync",
-        description = "Master switch. When on, syncs skills, quests, worn gear, diaries, and combat "
-            + "achievements to journal.osrsjournal.com while you play. Off by default — enable this, "
+        description = "Master switch. When on, syncs skills, quests, worn gear, diaries, combat "
+            + "achievements, and Collection Log pages (when you open them in-game) to "
+            + "journal.osrsjournal.com while you play. Off by default — enable this, "
             + "confirm the warning, then enter the pairing code from the sidebar on the website. "
             + "Bank & Inventory is a separate toggle below and does nothing while this is off.",
         // Exact wording required by RuneLite Plugin Hub / example-plugin AGENTS.md

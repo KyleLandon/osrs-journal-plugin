@@ -36,6 +36,7 @@ import net.runelite.api.events.VarbitChanged;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
@@ -57,6 +58,7 @@ import net.runelite.client.util.ImageUtil;
  *   <li>All quest states ({@link GameTick} — polled every ~1 min)</li>
  *   <li>Worn equipment ({@link ItemContainerChanged} for {@code InventoryID.EQUIPMENT})</li>
  *   <li>Bank contents ({@link ItemContainerChanged} for {@code InventoryID.BANK})</li>
+ *   <li>Collection Log pages (when opened in-game via {@link CollectionLogCapture})</li>
  * </ul>
  *
  * <p><strong>Threading model:</strong>
@@ -101,6 +103,12 @@ public class OsrsJournalPlugin extends Plugin
     @Inject
     private HostedApiService hostedApiService;
 
+    @Inject
+    private CollectionLogCapture collectionLogCapture;
+
+    @Inject
+    private EventBus eventBus;
+
     /**
      * RuneLite's shared thread pool — use this for all off-thread work.
      * Never create your own ExecutorService in a plugin.
@@ -125,6 +133,9 @@ public class OsrsJournalPlugin extends Plugin
 
     /** Debounce handle for diary / combat achievement sync after varbit changes. */
     private ScheduledFuture<?> progressSyncFuture;
+
+    /** Debounce handle for collection-log page sync after ScriptPostFired. */
+    private ScheduledFuture<?> collectionLogSyncFuture;
 
     /** Snapshot of quest states used to detect changes between polls. */
     private final Map<Quest, QuestState> lastQuestStates = new EnumMap<>(Quest.class);
@@ -152,6 +163,9 @@ public class OsrsJournalPlugin extends Plugin
         panel.setNewCodeListener(this::requestNewPairingCode);
         panel.setTickListener(this::refreshPanel);
 
+        collectionLogCapture.setOnPagesChanged(this::scheduleCollectionLogSync);
+        eventBus.register(collectionLogCapture);
+
         BufferedImage icon = ImageUtil.loadImageResource(getClass(), "journal_icon.png");
         if (icon == null)
         {
@@ -177,9 +191,13 @@ public class OsrsJournalPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        eventBus.unregister(collectionLogCapture);
+        collectionLogCapture.setOnPagesChanged(null);
+        collectionLogCapture.drainPages();
         cancelSkillDebounce();
         cancelInventoryDebounce();
         cancelProgressDebounce();
+        cancelCollectionLogDebounce();
         lastQuestStates.clear();
         currentRsn = null;
         openedSidebarOnce = false;
@@ -226,6 +244,8 @@ public class OsrsJournalPlugin extends Plugin
                 cancelSkillDebounce();
                 cancelInventoryDebounce();
                 cancelProgressDebounce();
+                cancelCollectionLogDebounce();
+                collectionLogCapture.drainPages();
                 SwingUtilities.invokeLater(() ->
                 {
                     if (panel != null)
@@ -597,6 +617,63 @@ public class OsrsJournalPlugin extends Plugin
             2, TimeUnit.SECONDS);
     }
 
+    /**
+     * Debounce collection-log captures — flipping through pages fires
+     * {@code COLLECTION_DRAW_LIST} often; wait 2s after the last page before syncing.
+     */
+    private void scheduleCollectionLogSync()
+    {
+        if (!config.syncEnabled() || currentRsn == null)
+        {
+            // Discard captures while sync is off / not logged in.
+            collectionLogCapture.drainPages();
+            return;
+        }
+        cancelCollectionLogDebounce();
+        final String rsn = currentRsn;
+        collectionLogSyncFuture = executor.schedule(() ->
+        {
+            if (!config.syncEnabled() || !rsn.equals(currentRsn))
+            {
+                collectionLogCapture.drainPages();
+                return;
+            }
+            Map<String, List<CollectionLogCapture.CapturedItem>> pages =
+                collectionLogCapture.drainPages();
+            if (pages.isEmpty())
+            {
+                return;
+            }
+            List<Map<String, Object>> payload = buildCollectionLogPageRecords(pages);
+            journalSyncService.syncCollectionLog(rsn, payload);
+            refreshPanel();
+        }, 2, TimeUnit.SECONDS);
+    }
+
+    private static List<Map<String, Object>> buildCollectionLogPageRecords(
+        Map<String, List<CollectionLogCapture.CapturedItem>> pages
+    )
+    {
+        List<Map<String, Object>> out = new ArrayList<>(pages.size());
+        for (Map.Entry<String, List<CollectionLogCapture.CapturedItem>> e : pages.entrySet())
+        {
+            List<Map<String, Object>> items = new ArrayList<>(e.getValue().size());
+            for (CollectionLogCapture.CapturedItem item : e.getValue())
+            {
+                items.add(ImmutableMap.of(
+                    "item_id", item.getItemId(),
+                    "item_name", item.getItemName(),
+                    "quantity", item.getQuantity()
+                ));
+            }
+            out.add(ImmutableMap.of(
+                "page", e.getKey(),
+                "items", items
+            ));
+        }
+        return out;
+    }
+
     // ── Record builders (must be called on the client thread) ─────────────────
 
     private List<Map<String, Object>> buildPlayerRecord(String rsn)
@@ -936,6 +1013,15 @@ public class OsrsJournalPlugin extends Plugin
         {
             progressSyncFuture.cancel(false);
             progressSyncFuture = null;
+        }
+    }
+
+    private void cancelCollectionLogDebounce()
+    {
+        if (collectionLogSyncFuture != null && !collectionLogSyncFuture.isDone())
+        {
+            collectionLogSyncFuture.cancel(false);
+            collectionLogSyncFuture = null;
         }
     }
 
