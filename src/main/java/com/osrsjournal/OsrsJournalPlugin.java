@@ -28,6 +28,7 @@ import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
 import net.runelite.api.VarPlayer;
 import net.runelite.api.Varbits;
+import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
@@ -193,7 +194,7 @@ public class OsrsJournalPlugin extends Plugin
     {
         eventBus.unregister(collectionLogCapture);
         collectionLogCapture.setOnPagesChanged(null);
-        collectionLogCapture.drainPages();
+        collectionLogCapture.resetSession();
         cancelSkillDebounce();
         cancelInventoryDebounce();
         cancelProgressDebounce();
@@ -245,7 +246,7 @@ public class OsrsJournalPlugin extends Plugin
                 cancelInventoryDebounce();
                 cancelProgressDebounce();
                 cancelCollectionLogDebounce();
-                collectionLogCapture.drainPages();
+                collectionLogCapture.resetSession();
                 SwingUtilities.invokeLater(() ->
                 {
                     if (panel != null)
@@ -632,33 +633,40 @@ public class OsrsJournalPlugin extends Plugin
         cancelCollectionLogDebounce();
         final String rsn = currentRsn;
         collectionLogSyncFuture = executor.schedule(() ->
-        {
-            if (!config.syncEnabled() || !rsn.equals(currentRsn))
+            clientThread.invoke(() ->
             {
-                collectionLogCapture.drainPages();
-                return;
-            }
-            Map<String, List<CollectionLogCapture.CapturedItem>> pages =
-                collectionLogCapture.drainPages();
-            if (pages.isEmpty())
-            {
-                return;
-            }
-            List<Map<String, Object>> payload = buildCollectionLogPageRecords(pages);
-            journalSyncService.syncCollectionLog(rsn, payload);
-            refreshPanel();
-        }, 2, TimeUnit.SECONDS);
+                if (!config.syncEnabled() || !rsn.equals(currentRsn)
+                    || client.getGameState() != GameState.LOGGED_IN)
+                {
+                    collectionLogCapture.drainPages();
+                    return;
+                }
+                Map<String, CollectionLogCapture.CapturedPage> pages =
+                    collectionLogCapture.drainPages();
+                if (pages.isEmpty())
+                {
+                    return;
+                }
+                List<Map<String, Object>> playerRecord = buildPlayerRecord(rsn);
+                List<Map<String, Object>> payload = buildCollectionLogPageRecords(pages);
+                executor.execute(() ->
+                {
+                    journalSyncService.syncCollectionLog(rsn, payload, playerRecord);
+                    refreshPanel();
+                });
+            }),
+            2, TimeUnit.SECONDS);
     }
 
     private static List<Map<String, Object>> buildCollectionLogPageRecords(
-        Map<String, List<CollectionLogCapture.CapturedItem>> pages
+        Map<String, CollectionLogCapture.CapturedPage> pages
     )
     {
         List<Map<String, Object>> out = new ArrayList<>(pages.size());
-        for (Map.Entry<String, List<CollectionLogCapture.CapturedItem>> e : pages.entrySet())
+        for (CollectionLogCapture.CapturedPage page : pages.values())
         {
-            List<Map<String, Object>> items = new ArrayList<>(e.getValue().size());
-            for (CollectionLogCapture.CapturedItem item : e.getValue())
+            List<Map<String, Object>> items = new ArrayList<>(page.getItems().size());
+            for (CollectionLogCapture.CapturedItem item : page.getItems())
             {
                 items.add(ImmutableMap.of(
                     "item_id", item.getItemId(),
@@ -666,10 +674,27 @@ public class OsrsJournalPlugin extends Plugin
                     "quantity", item.getQuantity()
                 ));
             }
-            out.add(ImmutableMap.of(
-                "page", e.getKey(),
-                "items", items
-            ));
+            List<Map<String, Object>> killCounts = new ArrayList<>(page.getKillCounts().size());
+            for (CollectionLogCapture.KillCount kc : page.getKillCounts())
+            {
+                killCounts.add(ImmutableMap.of(
+                    "name", kc.getName(),
+                    "amount", kc.getAmount()
+                ));
+            }
+            ImmutableMap.Builder<String, Object> row = ImmutableMap.<String, Object>builder()
+                .put("page", page.getPage())
+                .put("items", items)
+                .put("kill_counts", killCounts);
+            if (page.getObtained() != null)
+            {
+                row.put("obtained", page.getObtained());
+            }
+            if (page.getObtainedTotal() != null)
+            {
+                row.put("obtained_total", page.getObtainedTotal());
+            }
+            out.add(row.build());
         }
         return out;
     }
@@ -679,11 +704,14 @@ public class OsrsJournalPlugin extends Plugin
     private List<Map<String, Object>> buildPlayerRecord(String rsn)
     {
         List<Map<String, Object>> records = new ArrayList<>();
-        records.add(ImmutableMap.of(
-            "rsn",          rsn,
-            "last_synced",  nowIso(),
-            "quest_points", client.getVarpValue(VarPlayer.QUEST_POINTS)
-        ));
+        records.add(ImmutableMap.<String, Object>builder()
+            .put("rsn", rsn)
+            .put("last_synced", nowIso())
+            .put("quest_points", client.getVarpValue(VarPlayer.QUEST_POINTS))
+            // Same varps Chat Commands uses for !clog — available without opening the log.
+            .put("collection_count", client.getVarpValue(VarPlayerID.COLLECTION_COUNT))
+            .put("collection_count_max", client.getVarpValue(VarPlayerID.COLLECTION_COUNT_MAX))
+            .build());
         return records;
     }
 

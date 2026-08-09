@@ -15,8 +15,11 @@ like ChatGPT or Claude.
 |------|------|
 | Skills (levels + XP) | A few seconds after you gain XP |
 | Quest states | Checked about once a minute |
+| Achievement diaries & combat achievement tiers | On login and when they change |
+| Collection log totals | On login (unique obtained / max) |
+| Collection log pages | When you open a page in-game (items + kill counts) |
 | Worn equipment | Whenever your gear changes |
-| Bank contents | **Only if you enable Sync Bank** — each time you open the bank |
+| Bank & inventory | **Only if you enable Sync Bank & Inventory** — bank on open, inventory as it changes |
 
 ## Getting started
 
