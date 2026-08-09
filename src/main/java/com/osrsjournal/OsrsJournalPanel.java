@@ -333,6 +333,12 @@ class OsrsJournalPanel extends PluginPanel
         sb.append("<hr/>");
         sb.append("<p style='color:#94a3b8'>Quests finished: <span style='color:#f1f5f9'>")
             .append(s.getQuestsFinished()).append("</span></p>");
+        if (s.getCollectionCountMax() > 0)
+        {
+            sb.append("<p style='color:#94a3b8'>Collection log: <span style='color:#f1f5f9'>")
+                .append(s.getCollectionCount()).append(" / ").append(s.getCollectionCountMax())
+                .append("</span></p>");
+        }
         if (!s.getRecentQuests().isEmpty())
         {
             sb.append("<p style='color:#64748b;margin-bottom:4px'>In progress / recent:</p><ul style='margin-top:0;padding-left:16px'>");
@@ -343,7 +349,7 @@ class OsrsJournalPanel extends PluginPanel
             sb.append("</ul>");
         }
         sb.append("<p style='color:#64748b;font-size:11px'>Diaries, combat achievements, gear, collection log "
-            + "(open pages in-game to sync), and export live in the browser journal.</p>");
+            + "(open pages in-game to sync items &amp; kill counts), and export live in the browser journal.</p>");
         return htmlWrap(sb.toString());
     }
 

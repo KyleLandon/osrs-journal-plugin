@@ -32,6 +32,8 @@ class JournalSnapshot
     private final boolean pairCodeExpired;
     private final String pairExpiryLabel;
     private final JournalSyncService.SyncStatus syncStatus;
+    private final int collectionCount;
+    private final int collectionCountMax;
 
     JournalSnapshot(
         String rsn,
@@ -48,7 +50,9 @@ class JournalSnapshot
         boolean accountLinked,
         boolean pairCodeExpired,
         String pairExpiryLabel,
-        JournalSyncService.SyncStatus syncStatus
+        JournalSyncService.SyncStatus syncStatus,
+        int collectionCount,
+        int collectionCountMax
     )
     {
         this.rsn = rsn;
@@ -66,6 +70,8 @@ class JournalSnapshot
         this.pairCodeExpired = pairCodeExpired;
         this.pairExpiryLabel = pairExpiryLabel;
         this.syncStatus = syncStatus;
+        this.collectionCount = collectionCount;
+        this.collectionCountMax = collectionCountMax;
     }
 
     /** One-line status for the panel header, ordered by what the user should do next. */
@@ -179,6 +185,9 @@ class JournalSnapshot
         boolean expired = pairing != null && pairing.isCodeExpired();
         String expiryLabel = pairing != null ? pairing.getExpiryLabel() : null;
 
+        int clogCount = client.getVarpValue(net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT);
+        int clogMax = client.getVarpValue(net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_MAX);
+
         return new JournalSnapshot(
             rsn,
             cb,
@@ -194,7 +203,9 @@ class JournalSnapshot
             linked,
             expired,
             expiryLabel,
-            syncStatus
+            syncStatus,
+            clogCount,
+            clogMax
         );
     }
 

@@ -136,19 +136,26 @@ class JournalSyncService
 
     /**
      * Collection-log pages opened in-game. Each map is
-     * {@code page} + {@code items} (list of item_id / item_name / quantity).
+     * {@code page} + {@code items} (+ optional obtained / kill_counts).
+     * When {@code playerRecord} is non-null it refreshes collection_count totals.
      */
-    boolean syncCollectionLog(String rsn, List<Map<String, Object>> pages)
+    boolean syncCollectionLog(
+        String rsn,
+        List<Map<String, Object>> pages,
+        List<Map<String, Object>> playerRecord
+    )
     {
         if (pages == null || pages.isEmpty())
         {
             return true;
         }
-        return syncPartial(
-            rsn,
-            new HostedApiService.SyncPayload().collectionLogPages(pages),
-            "collection log"
-        );
+        HostedApiService.SyncPayload payload = new HostedApiService.SyncPayload()
+            .collectionLogPages(pages);
+        if (playerRecord != null && !playerRecord.isEmpty())
+        {
+            payload.players(playerRecord).touchLastSynced(true);
+        }
+        return syncPartial(rsn, payload, "collection log");
     }
 
     /** Pushes the profile privacy flag; only called when the user flips the config toggle. */

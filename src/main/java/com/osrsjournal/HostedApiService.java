@@ -423,7 +423,7 @@ public class HostedApiService
 
         /**
          * Collection-log page snapshots. Each entry is
-         * {@code { page, items: [{ item_id, item_name, quantity }] }}.
+         * {@code { page, items, kill_counts?, obtained?, obtained_total? }}.
          */
         SyncPayload collectionLogPages(List<Map<String, Object>> pages)
         {
