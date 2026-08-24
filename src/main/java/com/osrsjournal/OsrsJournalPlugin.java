@@ -6,10 +6,12 @@ import com.google.inject.Provides;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -58,6 +60,7 @@ import net.runelite.client.util.ImageUtil;
  *   <li>All quest states ({@link GameTick} — polled every ~1 min)</li>
  *   <li>Worn equipment ({@link ItemContainerChanged} for {@code InventoryID.EQUIPMENT})</li>
  *   <li>Bank contents ({@link ItemContainerChanged} for {@code InventoryID.BANK})</li>
+ *   <li>Looting bag and POH costume-room storage (when those interfaces are opened)</li>
  *   <li>Collection Log pages (when opened in-game via {@link CollectionLogCapture})</li>
  * </ul>
  *
@@ -137,6 +140,12 @@ public class OsrsJournalPlugin extends Plugin
     /** Debounce handle for collection-log page sync after ScriptPostFired. */
     private ScheduledFuture<?> collectionLogSyncFuture;
 
+    /** Debounce handles for looting bag / POH costume-room snapshots, keyed by stash id. */
+    private final Map<String, ScheduledFuture<?>> stashSyncFutures = new ConcurrentHashMap<>();
+
+    /** Latest captured extra-storage rows waiting to be sent after debounce. */
+    private final Map<String, List<Map<String, Object>>> pendingStashRecords = new ConcurrentHashMap<>();
+
     /** Snapshot of quest states used to detect changes between polls. */
     private final Map<Quest, QuestState> lastQuestStates = new EnumMap<>(Quest.class);
 
@@ -198,6 +207,7 @@ public class OsrsJournalPlugin extends Plugin
         cancelInventoryDebounce();
         cancelProgressDebounce();
         cancelCollectionLogDebounce();
+        cancelStashDebounce();
         lastQuestStates.clear();
         currentRsn = null;
         openedSidebarOnce = false;
@@ -245,6 +255,7 @@ public class OsrsJournalPlugin extends Plugin
                 cancelInventoryDebounce();
                 cancelProgressDebounce();
                 cancelCollectionLogDebounce();
+                cancelStashDebounce();
                 collectionLogCapture.drainPages();
                 SwingUtilities.invokeLater(() ->
                 {
@@ -296,6 +307,7 @@ public class OsrsJournalPlugin extends Plugin
             if (config.syncBank() && config.syncEnabled() && currentRsn != null)
             {
                 snapshotBankAndInventory(currentRsn);
+                snapshotLoadedStashes(currentRsn);
             }
             return;
         }
@@ -357,11 +369,12 @@ public class OsrsJournalPlugin extends Plugin
     /**
      * Triggered when the contents of an {@link ItemContainer} change.
      *
-     * <p>We handle two containers:
+     * <p>We handle these containers:
      * <ul>
      *   <li>{@link InventoryID#EQUIPMENT} — syncs worn gear immediately</li>
      *   <li>{@link InventoryID#BANK} — full bank re-sync (delete + insert) when opened</li>
      *   <li>{@link InventoryID#INVENTORY} — full inventory snapshot (when Sync Bank is on)</li>
+     *   <li>Looting bag and POH costume-room units — last-seen snapshot per container</li>
      * </ul>
      *
      * <p>Data is read here on the client thread, then handed to the executor for network I/O.
@@ -412,6 +425,22 @@ public class OsrsJournalPlugin extends Plugin
         else if (containerId == InventoryID.INVENTORY.getId() && config.syncBank())
         {
             scheduleInventorySync(rsn);
+        }
+        else if (config.syncBank() && ExtraItemStorage.isTracked(containerId))
+        {
+            // Closing the interface can unload the container — never treat that as empty.
+            ItemContainer extra = event.getItemContainer();
+            if (extra == null)
+            {
+                extra = client.getItemContainer(containerId);
+            }
+            if (extra == null)
+            {
+                return;
+            }
+            String key = ExtraItemStorage.keyFor(containerId);
+            pendingStashRecords.put(key, buildItemRecords(extra));
+            scheduleStashSync(rsn, key);
         }
     }
 
@@ -501,11 +530,18 @@ public class OsrsJournalPlugin extends Plugin
                 (config.syncBank() && client.getItemContainer(InventoryID.INVENTORY) != null)
                     ? buildInventoryRecords()
                     : null;
+            final List<Map<String, Object>> stashPages =
+                config.syncBank() ? buildLoadedStashPages() : Collections.emptyList();
 
             executor.execute(() ->
             {
                 HostedApiService.SyncResult result = journalSyncService.syncLogin(
                     rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords, invRecords);
+
+                if (!stashPages.isEmpty())
+                {
+                    journalSyncService.syncStashes(rsn, stashPages);
+                }
 
                 if (result.isSuccess() && !result.isClaimed())
                 {
@@ -682,6 +718,53 @@ public class OsrsJournalPlugin extends Plugin
                 executor.execute(() -> syncInventory(rsn, inv));
             }),
             2, TimeUnit.SECONDS);
+    }
+
+    /** Push looting bag / POH containers that are currently loaded (do not wipe unloaded ones). */
+    private void snapshotLoadedStashes(String rsn)
+    {
+        clientThread.invokeLater(() ->
+        {
+            if (!config.syncEnabled() || !config.syncBank() || !rsn.equals(currentRsn)
+                || client.getGameState() != GameState.LOGGED_IN)
+            {
+                return;
+            }
+            List<Map<String, Object>> pages = buildLoadedStashPages();
+            if (pages.isEmpty())
+            {
+                return;
+            }
+            executor.execute(() ->
+            {
+                journalSyncService.syncStashes(rsn, pages);
+                refreshPanel();
+            });
+        });
+    }
+
+    private void scheduleStashSync(String rsn, String containerKey)
+    {
+        ScheduledFuture<?> prev = stashSyncFutures.remove(containerKey);
+        if (prev != null && !prev.isDone())
+        {
+            prev.cancel(false);
+        }
+        stashSyncFutures.put(containerKey, executor.schedule(() ->
+        {
+            List<Map<String, Object>> items = pendingStashRecords.remove(containerKey);
+            stashSyncFutures.remove(containerKey);
+            if (items == null || !config.syncEnabled() || !config.syncBank() || !rsn.equals(currentRsn))
+            {
+                return;
+            }
+            List<Map<String, Object>> pages = Collections.singletonList(ImmutableMap.of(
+                "container", containerKey,
+                "items", items
+            ));
+            journalSyncService.syncStashes(rsn, pages);
+            refreshPanel();
+        }, 2, TimeUnit.SECONDS));
     }
 
     private void scheduleProgressSync(String rsn)
@@ -979,39 +1062,14 @@ public class OsrsJournalPlugin extends Plugin
         {
             return new ArrayList<>();
         }
-
-        // Canonicalize noted/placeholder IDs so journal icons & GE prices resolve.
-        // Merge stacks that collapse to the same canonical id (noted + unnoted).
-        Map<Integer, int[]> qtyById = new java.util.LinkedHashMap<>();
-        Map<Integer, String> nameById = new java.util.HashMap<>();
-        for (Item item : container.getItems())
-        {
-            // quantity <= 0 filters bank placeholders — no reason to sync those
-            if (item == null || item.getId() == -1 || item.getQuantity() <= 0)
-            {
-                continue;
-            }
-            int itemId = itemManager.canonicalize(item.getId());
-            int[] qty = qtyById.get(itemId);
-            if (qty == null)
-            {
-                qtyById.put(itemId, new int[]{item.getQuantity()});
-                nameById.put(itemId, resolveItemName(itemId));
-            }
-            else
-            {
-                qty[0] += item.getQuantity();
-            }
-        }
-
-        List<Map<String, Object>> records = new ArrayList<>(qtyById.size());
-        for (Map.Entry<Integer, int[]> e : qtyById.entrySet())
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (Map<String, Object> row : buildItemRecords(container))
         {
             records.add(ImmutableMap.of(
-                "rsn",       rsn,
-                "item_id",   e.getKey(),
-                "item_name", nameById.get(e.getKey()),
-                "quantity",  e.getValue()[0]
+                "rsn", rsn,
+                "item_id", row.get("item_id"),
+                "item_name", row.get("item_name"),
+                "quantity", row.get("quantity")
             ));
         }
         return records;
@@ -1025,9 +1083,36 @@ public class OsrsJournalPlugin extends Plugin
         {
             return new ArrayList<>();
         }
+        return buildItemRecords(container);
+    }
 
+    /**
+     * Snapshots of extra storage currently loaded in the client. Unloaded
+     * containers are omitted so a previous cloud snapshot is not wiped.
+     */
+    private List<Map<String, Object>> buildLoadedStashPages()
+    {
+        List<Map<String, Object>> pages = new ArrayList<>();
+        for (int containerId : ExtraItemStorage.containerIds())
+        {
+            ItemContainer container = client.getItemContainer(containerId);
+            if (container == null)
+            {
+                continue;
+            }
+            pages.add(ImmutableMap.of(
+                "container", ExtraItemStorage.keyFor(containerId),
+                "items", buildItemRecords(container)
+            ));
+        }
+        return pages;
+    }
+
+    /** Canonicalized, merged stacks from any item container. */
+    private List<Map<String, Object>> buildItemRecords(ItemContainer container)
+    {
         Map<Integer, int[]> qtyById = new java.util.LinkedHashMap<>();
-        Map<Integer, String> nameById = new java.util.HashMap<>();
+        Map<Integer, String> nameById = new HashMap<>();
         for (Item item : container.getItems())
         {
             if (item == null || item.getId() == -1 || item.getQuantity() <= 0)
@@ -1124,6 +1209,19 @@ public class OsrsJournalPlugin extends Plugin
             collectionLogSyncFuture.cancel(false);
             collectionLogSyncFuture = null;
         }
+    }
+
+    private void cancelStashDebounce()
+    {
+        for (ScheduledFuture<?> future : stashSyncFutures.values())
+        {
+            if (future != null && !future.isDone())
+            {
+                future.cancel(false);
+            }
+        }
+        stashSyncFutures.clear();
+        pendingStashRecords.clear();
     }
 
     /**

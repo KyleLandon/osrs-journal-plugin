@@ -146,6 +146,23 @@ class JournalSyncService
     }
 
     /**
+     * Looting bag / POH costume-room snapshots. Each map is
+     * {@code container} + {@code items} (list of item_id / item_name / quantity).
+     */
+    boolean syncStashes(String rsn, List<Map<String, Object>> pages)
+    {
+        if (pages == null || pages.isEmpty())
+        {
+            return true;
+        }
+        return syncPartial(
+            rsn,
+            new HostedApiService.SyncPayload().stashes(pages).touchLastSynced(false),
+            "stashes"
+        );
+    }
+
+    /**
      * Collection-log pages opened in-game. Each map is
      * {@code page} + {@code items} (list of item_id / item_name / quantity).
      */

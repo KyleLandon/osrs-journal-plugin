@@ -45,9 +45,10 @@ public interface OsrsJournalConfig extends Config
         keyName = "syncBank",
         name = "Sync Bank & Inventory",
         description = "Requires Enable Sync. When on, uploads your full bank whenever you open it, "
-            + "and keeps your inventory snapshot updated so items count whether they are banked or "
-            + "in your bag (gear planner, Graceful marks, wealth, etc.). Only you can see this when "
-            + "signed in — public profiles never include bank or inventory.",
+            + "keeps your inventory snapshot updated, and records looting-bag (Check) and Player-Owned "
+            + "House costume-room storage when you open them so items count wherever they sit "
+            + "(gear planner, Graceful marks, wealth, etc.). Only you can see this when signed in — "
+            + "public profiles never include bank, inventory, looting bag, or house storage.",
         warning = "This feature submits your IP address to a 3rd-party server not controlled or verified by RuneLite developers",
         section = syncSection,
         position = 2
@@ -61,7 +62,8 @@ public interface OsrsJournalConfig extends Config
         keyName = "publicProfile",
         name = "Public Profile",
         description = "When linked, skills and quests are visible to others on journal.osrsjournal.com "
-            + "(like Wise Old Man). Bank, inventory, and worn gear stay private either way. "
+            + "(like Wise Old Man). Bank, inventory, looting bag, house storage, and worn gear "
+            + "stay private either way. "
             + "Requires Enable Sync for the plugin to push this setting.",
         section = syncSection,
         position = 3

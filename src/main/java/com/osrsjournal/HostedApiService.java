@@ -27,7 +27,7 @@ import okhttp3.Response;
  * the service role. Endpoints used:
  * <ul>
  *   <li>{@code pair-init} — issue/reuse a sync token + pairing code for an RSN</li>
- *   <li>{@code sync} — batched upsert of skills/quests/equipment/bank/inventory/collection log</li>
+ *   <li>{@code sync} — batched upsert of skills/quests/equipment/bank/inventory/stashes/collection log</li>
  *   <li>{@code localhost-session} — short-lived read token for "Open full journal"</li>
  * </ul>
  *
@@ -345,6 +345,8 @@ public class HostedApiService
         private List<Map<String, Object>> inventory_tracked;
         /** Collection-log pages → player_collection_log (atomic replace per page). */
         private List<Map<String, Object>> collection_log_pages;
+        /** Extra storage → player_item_stashes (looting bag / POH; replace per container). */
+        private List<Map<String, Object>> player_stashes;
         private boolean replace_equipment;
         private boolean replace_bank;
         private boolean replace_inventory;
@@ -428,6 +430,16 @@ public class HostedApiService
         SyncPayload collectionLogPages(List<Map<String, Object>> pages)
         {
             this.collection_log_pages = pages != null ? pages : Collections.emptyList();
+            return this;
+        }
+
+        /**
+         * Extra storage snapshots. Each entry is
+         * {@code { container, items: [{ item_id, item_name, quantity }] }}.
+         */
+        SyncPayload stashes(List<Map<String, Object>> pages)
+        {
+            this.player_stashes = pages != null ? pages : Collections.emptyList();
             return this;
         }
 
