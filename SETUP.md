@@ -32,73 +32,34 @@ The built jar will be at `build/libs/osrs-journal-plugin-1.0.0.jar` (~50 KB).
 
 ## Loading into RuneLite
 
-### Official Jagex Launcher — sideloading does NOT work
+**Users** install **OSRS Journal** from the Plugin Hub. Shipping an update is a
+`commit=` bump on [runelite/plugin-hub](https://github.com/runelite/plugin-hub) —
+see [PLUGIN_HUB.md](PLUGIN_HUB.md).
 
-RuneLite **intentionally disables** sideloaded plugins when started from the official launcher
-(`launcher version 2.7.5` in logs), even if `settings.json` includes `--developer-mode`.
+**Local development** uses the Hub-documented Gradle task (same as
+[example-plugin](https://github.com/runelite/example-plugin)). Jagex Launcher
+**disables sideloading**, so do not expect a copied jar to load there.
 
-Your log will show the flag, but **no** `Side-loading plugin ...osrs-journal-plugin` line — that is expected.
+```bash
+cd osrs-journal-plugin
+./gradlew run
+```
 
-**Personal use options:**
+That starts a `--developer-mode` client with this plugin loaded as builtin.
 
-| Method | Plugin loads? |
-|--------|----------------|
-| **`run-dev.exe`** (self-built client) | Yes |
-| **Jagex Launcher + sideload jar** | No |
-| **Plugin Hub** (after PR merge) | Yes, in normal RuneLite |
+### Jagex Account login (required for the Gradle client)
 
-For now, use **`run-dev.exe`** to play with the OSRS Journal plugin.
-
-### Jagex Account login (required for dev client)
-
-If your account uses a **Jagex Account**, the dev client cannot accept username/password.
-You must export your session once from the official launcher:
-
-1. Run `export-credentials.bat` from the project root.
-2. Launch OSRS through the **Jagex Launcher** and log in normally.
-3. RuneLite writes `%USERPROFILE%\.runelite\credentials.properties`.
-4. Run `run-dev.exe` — it auto-logs in using those credentials.
+The Gradle client cannot take a Jagex username/password. Log in through the
+**Jagex Launcher** once so RuneLite writes `~/.runelite/credentials.properties`
+(Windows: `%USERPROFILE%\.runelite\credentials.properties`), then `./gradlew run`
+will pick it up.
 
 See the [RuneLite Jagex Accounts wiki](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts).
 
-### Quick start (already set up)
+### IntelliJ
 
-```bat
-export-credentials.bat          rem one-time, if you have a Jagex Account
-run-dev.exe                   rem auto-updates RuneLite, builds plugin, launches
-run-dev.exe --rebuild         rem force full client rebuild, then launch
-run-dev.exe --no-update       rem skip git pull of runelite/ (use local source as-is)
-run-dev.exe --skip-plugin-build rem skip plugin rebuild when iterating on client only
-run-dev.exe --pluginhub-version=1.12.35  rem optional Hub version override
-osrs-journal-plugin\build.bat rem rebuild plugin after code changes
-```
-
-On each launch, `run-dev.exe`:
-1. **Pulls latest RuneLite** (`git fetch` + `git pull --ff-only`) when `runelite/` is behind
-2. **Rebuilds the client** if source updated, the shaded jar is missing, or the jar is older than the live release
-3. Sets `-Drunelite.pluginhub.version=` so **Plugin Hub plugins still load** in the snapshot/dev client
-
-Use `--no-update` only if you have local RuneLite edits you don't want overwritten. Override Hub with `--pluginhub-version=` only if Hub isn't ready for the newest release yet.
-
-`run-dev.bat` is a thin wrapper around `run-dev.exe` if you prefer the batch file.
-
-Rebuild the launcher after editing `scripts/RunDevLauncher.cs`:
-
-```powershell
-powershell -File scripts/build-run-dev-exe.ps1
-```
-
-### IntelliJ alternative
-
-1. Clone the main RuneLite repo alongside this plugin (already at `../runelite`).
-2. Open the `runelite` project in IntelliJ with JDK 11.
-3. Run `net.runelite.client.RuneLite` with:
-   - VM options: `-ea --add-opens=java.desktop/sun.awt=ALL-UNNAMED -Drunelite.pluginhub.version=1.12.33`
-   - Program arguments: `--developer-mode`
-
-   Use the current release version for `-Drunelite.pluginhub.version=` (see
-   `https://static.runelite.net/bootstrap.json`). Without it, Plugin Hub 404s
-   on snapshot clients.
+Open this plugin project with JDK 11 and run the Gradle `run` task (green arrow
+next to `tasks.register('run', JavaExec)` in `build.gradle`).
 
 ---
 

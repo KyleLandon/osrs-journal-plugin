@@ -82,4 +82,5 @@ is linked.
 
 ## Developers
 
-Build and development docs live in [SETUP.md](SETUP.md).
+Build and development docs live in [SETUP.md](SETUP.md). Plugin Hub updates:
+[PLUGIN_HUB.md](PLUGIN_HUB.md). Local client: `./gradlew run` (not Jagex Launcher).

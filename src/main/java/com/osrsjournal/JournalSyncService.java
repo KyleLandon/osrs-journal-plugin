@@ -60,7 +60,8 @@ class JournalSyncService
         List<Map<String, Object>> questRecords,
         List<Map<String, Object>> equipRecords,
         List<Map<String, Object>> diaryRecords,
-        List<Map<String, Object>> combatAchievementRecords
+        List<Map<String, Object>> combatAchievementRecords,
+        List<Map<String, Object>> inventoryRecords
     )
     {
         // Note: profile_public is intentionally NOT sent here — the website's
@@ -71,10 +72,20 @@ class JournalSyncService
             .players(playerRecord)
             .skills(skillRecords)
             .quests(questRecords)
-            .equipment(equipRecords, true)
             .diaries(diaryRecords)
             .combatAchievements(combatAchievementRecords)
             .touchLastSynced(true);
+
+        // Null equipment means the container was not loaded yet — skip the
+        // replace so we don't wipe a previous snapshot of worn gear.
+        if (equipRecords != null)
+        {
+            payload.equipment(equipRecords, true);
+        }
+        if (inventoryRecords != null)
+        {
+            payload.inventory(inventoryRecords);
+        }
 
         return syncWithRepair(rsn, payload, "login");
     }

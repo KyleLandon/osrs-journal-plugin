@@ -291,6 +291,12 @@ public class OsrsJournalPlugin extends Plugin
         {
             // Surface the "bank on / sync off" trap immediately in the sidebar.
             refreshPanel();
+            // Opting in mid-session used to wait for a bank open / inventory
+            // change, so the site stayed empty until then. Snapshot now.
+            if (config.syncBank() && config.syncEnabled() && currentRsn != null)
+            {
+                snapshotBankAndInventory(currentRsn);
+            }
             return;
         }
 
@@ -363,18 +369,28 @@ public class OsrsJournalPlugin extends Plugin
     @Subscribe
     public void onItemContainerChanged(ItemContainerChanged event)
     {
-        if (!config.syncEnabled() || currentRsn == null)
+        if (!config.syncEnabled())
+        {
+            return;
+        }
+
+        // Equipment often loads before performLoginSync assigns currentRsn.
+        // Resolve the name here so the first container event is not dropped.
+        final String rsn = loggedInRsn();
+        if (rsn == null)
         {
             return;
         }
 
         final int containerId = event.getContainerId();
-        final String rsn = currentRsn;
 
         if (containerId == InventoryID.EQUIPMENT.getId())
         {
             List<Map<String, Object>> records = buildEquipmentRecords(rsn);
-            executor.execute(() -> syncEquipment(rsn, records));
+            if (records != null)
+            {
+                executor.execute(() -> syncEquipment(rsn, records));
+            }
         }
         else if (containerId == InventoryID.BANK.getId() && config.syncBank())
         {
@@ -481,11 +497,15 @@ public class OsrsJournalPlugin extends Plugin
             List<Map<String, Object>> equipRecords  = buildEquipmentRecords(rsn);
             List<Map<String, Object>> diaryRecords  = buildDiaryRecords(rsn);
             List<Map<String, Object>> caRecords     = buildCombatAchievementRecords(rsn);
+            final List<Map<String, Object>> invRecords =
+                (config.syncBank() && client.getItemContainer(InventoryID.INVENTORY) != null)
+                    ? buildInventoryRecords()
+                    : null;
 
             executor.execute(() ->
             {
                 HostedApiService.SyncResult result = journalSyncService.syncLogin(
-                    rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords);
+                    rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords, invRecords);
 
                 if (result.isSuccess() && !result.isClaimed())
                 {
@@ -580,6 +600,71 @@ public class OsrsJournalPlugin extends Plugin
     {
         journalSyncService.syncDiariesAndCombatAchievements(rsn, diaries, cas);
         refreshPanel();
+    }
+
+    /**
+     * RSN of the logged-in player, capturing it on the first readable tick so
+     * early {@link ItemContainerChanged} events are not ignored.
+     */
+    private String loggedInRsn()
+    {
+        if (currentRsn != null)
+        {
+            return currentRsn;
+        }
+        if (client.getGameState() != GameState.LOGGED_IN)
+        {
+            return null;
+        }
+        Player localPlayer = client.getLocalPlayer();
+        if (localPlayer == null)
+        {
+            return null;
+        }
+        String rsn = localPlayer.getName();
+        if (rsn == null || rsn.isEmpty())
+        {
+            return null;
+        }
+        currentRsn = rsn;
+        return rsn;
+    }
+
+    /** Push current inventory (and bank if the container is loaded) off-thread. */
+    private void snapshotBankAndInventory(String rsn)
+    {
+        clientThread.invokeLater(() ->
+        {
+            if (!config.syncEnabled() || !config.syncBank() || !rsn.equals(currentRsn)
+                || client.getGameState() != GameState.LOGGED_IN)
+            {
+                return;
+            }
+            ItemContainer invContainer = client.getItemContainer(InventoryID.INVENTORY);
+            ItemContainer bankContainer = client.getItemContainer(InventoryID.BANK);
+            if (invContainer == null && bankContainer == null)
+            {
+                return;
+            }
+            final List<Map<String, Object>> inv = invContainer != null ? buildInventoryRecords() : null;
+            final List<Map<String, Object>> bank = bankContainer != null ? buildBankRecords(rsn) : null;
+            executor.execute(() ->
+            {
+                if (bank != null && inv != null)
+                {
+                    journalSyncService.syncBankAndInventory(rsn, bank, inv);
+                }
+                else if (bank != null)
+                {
+                    journalSyncService.syncBank(rsn, bank);
+                }
+                else
+                {
+                    journalSyncService.syncInventory(rsn, inv);
+                }
+                refreshPanel();
+            });
+        });
     }
 
     /** Debounce inventory pickups so we don't sync on every tick of a stack change. */
@@ -831,12 +916,16 @@ public class OsrsJournalPlugin extends Plugin
         return records;
     }
 
+    /**
+     * {@code null} when the equipment container has not loaded yet — callers
+     * must not treat that as "player is naked" and replace cloud gear.
+     */
     private List<Map<String, Object>> buildEquipmentRecords(String rsn)
     {
         ItemContainer container = client.getItemContainer(InventoryID.EQUIPMENT);
         if (container == null)
         {
-            return new ArrayList<>();
+            return null;
         }
 
         List<Map<String, Object>> records = new ArrayList<>();
@@ -861,7 +950,7 @@ public class OsrsJournalPlugin extends Plugin
             records.add(ImmutableMap.<String, Object>builder()
                 .put("rsn", rsn)
                 .put("slot_id", idx)
-                .put("slot_name", slot.name().toLowerCase())
+                .put("slot_name", canonicalSlotName(slot))
                 .put("item_id", itemId)
                 .put("item_name", itemName)
                 .put("quantity", item.getQuantity())
@@ -869,6 +958,18 @@ public class OsrsJournalPlugin extends Plugin
         }
 
         return records;
+    }
+
+    /**
+     * Website {@code SLOT_ORDER} uses {@code neck}; RuneLite's enum is {@code AMULET}.
+     */
+    static String canonicalSlotName(EquipmentInventorySlot slot)
+    {
+        if (slot == EquipmentInventorySlot.AMULET)
+        {
+            return "neck";
+        }
+        return slot.name().toLowerCase();
     }
 
     private List<Map<String, Object>> buildBankRecords(String rsn)
