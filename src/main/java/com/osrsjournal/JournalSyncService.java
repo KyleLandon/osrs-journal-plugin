@@ -117,7 +117,7 @@ class JournalSyncService
 
     boolean syncEquipment(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().equipment(records, true), "equipment");
+        return syncPartial(rsn, new HostedApiService.SyncPayload().equipment(records, true).touchLastSynced(false), "equipment");
     }
 
     boolean syncBank(String rsn, List<Map<String, Object>> records)
@@ -128,7 +128,7 @@ class JournalSyncService
     /** Inventory snapshot stored in player_inventory (counts with bank on the site). */
     boolean syncInventory(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().inventory(records), "inventory");
+        return syncPartial(rsn, new HostedApiService.SyncPayload().inventory(records).touchLastSynced(false), "inventory");
     }
 
     /** Bank + inventory in one request so ownership data stays consistent. */
