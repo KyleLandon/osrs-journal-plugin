@@ -13,10 +13,11 @@ like ChatGPT or Claude.
 
 | Data | When |
 |------|------|
-| Skills (levels + XP) | A few seconds after you gain XP |
+| Skills (levels + XP) | About 8 seconds after you gain XP |
 | Quest states | Checked about once a minute |
-| Worn equipment | Whenever your gear changes |
+| Worn equipment | About 2 seconds after gear settles |
 | Bank contents | **Only if you enable Sync Bank** — each time you open the bank |
+| Inventory | **Sync Bank only** — about 8 seconds after the last change |
 
 ## Getting started
 

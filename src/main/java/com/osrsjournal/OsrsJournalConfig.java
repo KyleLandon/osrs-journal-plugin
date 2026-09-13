@@ -83,7 +83,7 @@ public interface OsrsJournalConfig extends Config
     @Range(min = 1, max = 60)
     default int skillDebounceSeconds()
     {
-        return 3;
+        return 8;
     }
 
     @ConfigSection(

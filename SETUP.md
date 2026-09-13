@@ -2,10 +2,11 @@
 
 ## What this does
 The plugin runs inside RuneLite and syncs your character data to the OSRS Journal cloud in real time:
-- **Skills** — synced 3 seconds after your last XP gain (debounced)
+- **Skills** — synced 8 seconds after your last XP gain (debounced)
 - **Quests** — checked every ~1 minute for state changes
-- **Equipment** — synced every time your worn gear changes
+- **Equipment** — synced 2 seconds after worn gear settles
 - **Bank** — synced every time you open the bank
+- **Inventory** — synced 8 seconds after the last inventory change (Sync Bank only)
 
 **In-client UI:** a sidebar panel (book icon on the left) shows a live summary while logged in.
 **Open full journal** opens [journal.osrsjournal.com](https://journal.osrsjournal.com) with your

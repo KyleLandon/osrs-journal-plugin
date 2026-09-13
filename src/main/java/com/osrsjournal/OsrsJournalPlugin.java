@@ -81,6 +81,8 @@ public class OsrsJournalPlugin extends Plugin
 {
     // How often to poll for quest state changes (game ticks — 1 tick ≈ 0.6 s)
     private static final int QUEST_POLL_TICKS = 100; // ~1 minute
+    private static final int EQUIPMENT_DEBOUNCE_SECONDS = 2;
+    private static final int INVENTORY_DEBOUNCE_SECONDS = 8;
 
     /** Diary + combat-achievement varbits we sync mid-session via {@link VarbitChanged}. */
     private static final Set<Integer> TRACKED_PROGRESS_VARBITS = buildTrackedProgressVarbits();
@@ -130,6 +132,9 @@ public class OsrsJournalPlugin extends Plugin
 
     /** Debounce handle for skill sync — cancelled/rescheduled on every {@link StatChanged}. */
     private ScheduledFuture<?> skillSyncFuture;
+
+    /** Debounce handle for worn-gear sync after {@link InventoryID#EQUIPMENT} changes. */
+    private ScheduledFuture<?> equipmentSyncFuture;
 
     /** Debounce handle for tracked-inventory sync (Marks of grace / Graceful). */
     private ScheduledFuture<?> inventorySyncFuture;
@@ -204,6 +209,7 @@ public class OsrsJournalPlugin extends Plugin
         collectionLogCapture.setOnPagesChanged(null);
         collectionLogCapture.drainPages();
         cancelSkillDebounce();
+        cancelEquipmentDebounce();
         cancelInventoryDebounce();
         cancelProgressDebounce();
         cancelCollectionLogDebounce();
@@ -252,6 +258,7 @@ public class OsrsJournalPlugin extends Plugin
                 pairingService.clearState();
                 openedSidebarOnce = false; // next character can get the pairing sidebar
                 cancelSkillDebounce();
+                cancelEquipmentDebounce();
                 cancelInventoryDebounce();
                 cancelProgressDebounce();
                 cancelCollectionLogDebounce();
@@ -292,6 +299,8 @@ public class OsrsJournalPlugin extends Plugin
             else
             {
                 cancelSkillDebounce();
+                cancelEquipmentDebounce();
+                cancelInventoryDebounce();
                 cancelProgressDebounce();
                 refreshPanel();
             }
@@ -371,7 +380,7 @@ public class OsrsJournalPlugin extends Plugin
      *
      * <p>We handle these containers:
      * <ul>
-     *   <li>{@link InventoryID#EQUIPMENT} — syncs worn gear immediately</li>
+     *   <li>{@link InventoryID#EQUIPMENT} — worn gear, debounced {@value #EQUIPMENT_DEBOUNCE_SECONDS}s</li>
      *   <li>{@link InventoryID#BANK} — full bank re-sync (delete + insert) when opened</li>
      *   <li>{@link InventoryID#INVENTORY} — full inventory snapshot (when Sync Bank is on)</li>
      *   <li>Looting bag and POH costume-room units — last-seen snapshot per container</li>
@@ -399,11 +408,7 @@ public class OsrsJournalPlugin extends Plugin
 
         if (containerId == InventoryID.EQUIPMENT.getId())
         {
-            List<Map<String, Object>> records = buildEquipmentRecords(rsn);
-            if (records != null)
-            {
-                executor.execute(() -> syncEquipment(rsn, records));
-            }
+            scheduleEquipmentSync(rsn);
         }
         else if (containerId == InventoryID.BANK.getId() && config.syncBank())
         {
@@ -717,7 +722,31 @@ public class OsrsJournalPlugin extends Plugin
                 List<Map<String, Object>> inv = buildInventoryRecords();
                 executor.execute(() -> syncInventory(rsn, inv));
             }),
-            2, TimeUnit.SECONDS);
+            INVENTORY_DEBOUNCE_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** Debounce worn-gear swaps so raid/spec switches are one write. */
+    private void scheduleEquipmentSync(String rsn)
+    {
+        cancelEquipmentDebounce();
+        equipmentSyncFuture = executor.schedule(() ->
+            clientThread.invoke(() ->
+            {
+                if (!config.syncEnabled() || client.getGameState() != GameState.LOGGED_IN)
+                {
+                    return;
+                }
+                if (!rsn.equals(currentRsn) && !rsn.equals(loggedInRsn()))
+                {
+                    return;
+                }
+                List<Map<String, Object>> records = buildEquipmentRecords(rsn);
+                if (records != null)
+                {
+                    executor.execute(() -> syncEquipment(rsn, records));
+                }
+            }),
+            EQUIPMENT_DEBOUNCE_SECONDS, TimeUnit.SECONDS);
     }
 
     /** Push looting bag / POH containers that are currently loaded (do not wipe unloaded ones). */
@@ -1181,6 +1210,15 @@ public class OsrsJournalPlugin extends Plugin
         {
             skillSyncFuture.cancel(false);
             skillSyncFuture = null;
+        }
+    }
+
+    private void cancelEquipmentDebounce()
+    {
+        if (equipmentSyncFuture != null && !equipmentSyncFuture.isDone())
+        {
+            equipmentSyncFuture.cancel(false);
+            equipmentSyncFuture = null;
         }
     }
 
