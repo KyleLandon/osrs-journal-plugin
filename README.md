@@ -13,13 +13,14 @@ like ChatGPT or Claude.
 
 | Data | When |
 |------|------|
-| Skills (levels + XP) | A few seconds after you gain XP |
+| Skills (levels + XP) | About 8 seconds after you gain XP |
 | Quest states | Checked about once a minute |
 | Achievement diaries & combat achievement tiers | On login and when they change |
 | Collection log totals | On login (unique obtained / max) |
 | Collection log pages | When you open a page in-game (items + kill counts) |
-| Worn equipment | Whenever your gear changes |
-| Bank & inventory | **Only if you enable Sync Bank & Inventory** — bank on open, inventory as it changes |
+| Worn equipment | About 2 seconds after gear settles |
+| Bank contents | **Only if you enable Sync Bank** — each time you open the bank |
+| Inventory | **Sync Bank only** — about 8 seconds after the last change |
 
 ## Getting started
 
@@ -73,9 +74,9 @@ row-level security keeps private data (bank, gear) readable only by you.
 
 ## Sidebar panel
 
-While logged in, the panel shows your combat level, quest points, skill levels,
-quests in progress, sync status, and bank sync on/off — plus the pairing code until your account
-is linked.
+While logged in, the panel shows combat/QP/total, XP and levels gained this session
+(top skills), quests you can continue, sync status, and bank sync on/off — plus the
+pairing code until your account is linked.
 
 ## Support
 
@@ -85,4 +86,5 @@ is linked.
 
 ## Developers
 
-Build and development docs live in [SETUP.md](SETUP.md).
+Build and development docs live in [SETUP.md](SETUP.md). Plugin Hub updates:
+[PLUGIN_HUB.md](PLUGIN_HUB.md). Local client: `./gradlew run` (not Jagex Launcher).

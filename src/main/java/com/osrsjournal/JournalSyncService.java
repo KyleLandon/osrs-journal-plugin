@@ -60,7 +60,8 @@ class JournalSyncService
         List<Map<String, Object>> questRecords,
         List<Map<String, Object>> equipRecords,
         List<Map<String, Object>> diaryRecords,
-        List<Map<String, Object>> combatAchievementRecords
+        List<Map<String, Object>> combatAchievementRecords,
+        List<Map<String, Object>> inventoryRecords
     )
     {
         // Note: profile_public is intentionally NOT sent here — the website's
@@ -71,10 +72,20 @@ class JournalSyncService
             .players(playerRecord)
             .skills(skillRecords)
             .quests(questRecords)
-            .equipment(equipRecords, true)
             .diaries(diaryRecords)
             .combatAchievements(combatAchievementRecords)
             .touchLastSynced(true);
+
+        // Null equipment means the container was not loaded yet — skip the
+        // replace so we don't wipe a previous snapshot of worn gear.
+        if (equipRecords != null)
+        {
+            payload.equipment(equipRecords, true);
+        }
+        if (inventoryRecords != null)
+        {
+            payload.inventory(inventoryRecords);
+        }
 
         return syncWithRepair(rsn, payload, "login");
     }
@@ -106,7 +117,7 @@ class JournalSyncService
 
     boolean syncEquipment(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().equipment(records, true), "equipment");
+        return syncPartial(rsn, new HostedApiService.SyncPayload().equipment(records, true).touchLastSynced(false), "equipment");
     }
 
     boolean syncBank(String rsn, List<Map<String, Object>> records)
@@ -117,7 +128,7 @@ class JournalSyncService
     /** Inventory snapshot stored in player_inventory (counts with bank on the site). */
     boolean syncInventory(String rsn, List<Map<String, Object>> records)
     {
-        return syncPartial(rsn, new HostedApiService.SyncPayload().inventory(records), "inventory");
+        return syncPartial(rsn, new HostedApiService.SyncPayload().inventory(records).touchLastSynced(false), "inventory");
     }
 
     /** Bank + inventory in one request so ownership data stays consistent. */
@@ -131,6 +142,23 @@ class JournalSyncService
             rsn,
             new HostedApiService.SyncPayload().bankAndInventory(bankRecords, inventoryRecords),
             "bank+inventory"
+        );
+    }
+
+    /**
+     * Looting bag / POH costume-room snapshots. Each map is
+     * {@code container} + {@code items} (list of item_id / item_name / quantity).
+     */
+    boolean syncStashes(String rsn, List<Map<String, Object>> pages)
+    {
+        if (pages == null || pages.isEmpty())
+        {
+            return true;
+        }
+        return syncPartial(
+            rsn,
+            new HostedApiService.SyncPayload().stashes(pages).touchLastSynced(false),
+            "stashes"
         );
     }
 

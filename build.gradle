@@ -9,20 +9,25 @@ repositories {
     mavenLocal()
     maven {
         url = 'https://repo.runelite.net'
+        content {
+            includeGroupByRegex("net\\.runelite.*")
+        }
     }
     mavenCentral()
 }
 
-def runeliteVersion = 'latest.release'
+def runeLiteVersion = 'latest.release'
+def pluginMainClass = 'com.osrsjournal.OsrsJournalPluginTest'
 
 dependencies {
-    compileOnly group: 'net.runelite', name: 'client', version: runeliteVersion
+    compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
 
     compileOnly 'org.projectlombok:lombok:1.18.30'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
 
     testImplementation 'junit:junit:4.13.2'
-    testImplementation group: 'net.runelite', name: 'client', version: runeliteVersion
+    testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
+    testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion
     testCompileOnly 'org.projectlombok:lombok:1.18.30'
     testAnnotationProcessor 'org.projectlombok:lombok:1.18.30'
 }
@@ -35,7 +40,18 @@ java {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    options.release.set(11)
     options.compilerArgs << '-Xlint:unchecked'
+}
+
+// Official local test client (plugin-hub README / example-plugin).
+// Jagex Launcher cannot sideload — use this, then log in with a Jagex session:
+// https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts
+tasks.register('run', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = pluginMainClass
+    jvmArgs '-ea'
+    args '--developer-mode', '--debug'
 }
 
 jar {

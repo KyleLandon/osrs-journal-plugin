@@ -6,10 +6,12 @@ import com.google.inject.Provides;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -59,6 +61,7 @@ import net.runelite.client.util.ImageUtil;
  *   <li>All quest states ({@link GameTick} — polled every ~1 min)</li>
  *   <li>Worn equipment ({@link ItemContainerChanged} for {@code InventoryID.EQUIPMENT})</li>
  *   <li>Bank contents ({@link ItemContainerChanged} for {@code InventoryID.BANK})</li>
+ *   <li>Looting bag and POH costume-room storage (when those interfaces are opened)</li>
  *   <li>Collection Log pages (when opened in-game via {@link CollectionLogCapture})</li>
  * </ul>
  *
@@ -79,6 +82,8 @@ public class OsrsJournalPlugin extends Plugin
 {
     // How often to poll for quest state changes (game ticks — 1 tick ≈ 0.6 s)
     private static final int QUEST_POLL_TICKS = 100; // ~1 minute
+    private static final int EQUIPMENT_DEBOUNCE_SECONDS = 2;
+    private static final int INVENTORY_DEBOUNCE_SECONDS = 8;
 
     /** Diary + combat-achievement varbits we sync mid-session via {@link VarbitChanged}. */
     private static final Set<Integer> TRACKED_PROGRESS_VARBITS = buildTrackedProgressVarbits();
@@ -129,6 +134,17 @@ public class OsrsJournalPlugin extends Plugin
     /** Debounce handle for skill sync — cancelled/rescheduled on every {@link StatChanged}. */
     private ScheduledFuture<?> skillSyncFuture;
 
+    /** Debounce handle for sidebar redraw while XP is coming in. */
+    private ScheduledFuture<?> panelRefreshFuture;
+
+    /** XP/level at login (or character switch) for the sidebar session recap. */
+    private String sessionBaselineRsn;
+    private final EnumMap<Skill, Integer> sessionStartXp = new EnumMap<>(Skill.class);
+    private final EnumMap<Skill, Integer> sessionStartLevel = new EnumMap<>(Skill.class);
+
+    /** Debounce handle for worn-gear sync after {@link InventoryID#EQUIPMENT} changes. */
+    private ScheduledFuture<?> equipmentSyncFuture;
+
     /** Debounce handle for tracked-inventory sync (Marks of grace / Graceful). */
     private ScheduledFuture<?> inventorySyncFuture;
 
@@ -137,6 +153,12 @@ public class OsrsJournalPlugin extends Plugin
 
     /** Debounce handle for collection-log page sync after ScriptPostFired. */
     private ScheduledFuture<?> collectionLogSyncFuture;
+
+    /** Debounce handles for looting bag / POH costume-room snapshots, keyed by stash id. */
+    private final Map<String, ScheduledFuture<?>> stashSyncFutures = new ConcurrentHashMap<>();
+
+    /** Latest captured extra-storage rows waiting to be sent after debounce. */
+    private final Map<String, List<Map<String, Object>>> pendingStashRecords = new ConcurrentHashMap<>();
 
     /** Snapshot of quest states used to detect changes between polls. */
     private final Map<Quest, QuestState> lastQuestStates = new EnumMap<>(Quest.class);
@@ -196,10 +218,14 @@ public class OsrsJournalPlugin extends Plugin
         collectionLogCapture.setOnPagesChanged(null);
         collectionLogCapture.resetSession();
         cancelSkillDebounce();
+        cancelPanelRefresh();
+        cancelEquipmentDebounce();
         cancelInventoryDebounce();
         cancelProgressDebounce();
         cancelCollectionLogDebounce();
+        cancelStashDebounce();
         lastQuestStates.clear();
+        clearSessionBaseline();
         currentRsn = null;
         openedSidebarOnce = false;
         clientToolbar.removeNavigation(navButton);
@@ -237,15 +263,20 @@ public class OsrsJournalPlugin extends Plugin
                 executor.schedule(this::performLoginSync, 2, TimeUnit.SECONDS);
                 break;
             case LOGIN_SCREEN:
+                clearSessionBaseline();
+                // fall through
             case HOPPING:
                 currentRsn = null;
                 lastQuestStates.clear();
                 pairingService.clearState();
                 openedSidebarOnce = false; // next character can get the pairing sidebar
                 cancelSkillDebounce();
+                cancelPanelRefresh();
+                cancelEquipmentDebounce();
                 cancelInventoryDebounce();
                 cancelProgressDebounce();
                 cancelCollectionLogDebounce();
+                cancelStashDebounce();
                 collectionLogCapture.resetSession();
                 SwingUtilities.invokeLater(() ->
                 {
@@ -282,6 +313,8 @@ public class OsrsJournalPlugin extends Plugin
             else
             {
                 cancelSkillDebounce();
+                cancelEquipmentDebounce();
+                cancelInventoryDebounce();
                 cancelProgressDebounce();
                 refreshPanel();
             }
@@ -292,6 +325,13 @@ public class OsrsJournalPlugin extends Plugin
         {
             // Surface the "bank on / sync off" trap immediately in the sidebar.
             refreshPanel();
+            // Opting in mid-session used to wait for a bank open / inventory
+            // change, so the site stayed empty until then. Snapshot now.
+            if (config.syncBank() && config.syncEnabled() && currentRsn != null)
+            {
+                snapshotBankAndInventory(currentRsn);
+                snapshotLoadedStashes(currentRsn);
+            }
             return;
         }
 
@@ -329,6 +369,13 @@ public class OsrsJournalPlugin extends Plugin
     @Subscribe
     public void onStatChanged(StatChanged event)
     {
+        if (client.getGameState() != GameState.LOGGED_IN)
+        {
+            return;
+        }
+
+        schedulePanelRefresh();
+
         if (!config.syncEnabled() || currentRsn == null)
         {
             return;
@@ -352,11 +399,12 @@ public class OsrsJournalPlugin extends Plugin
     /**
      * Triggered when the contents of an {@link ItemContainer} change.
      *
-     * <p>We handle two containers:
+     * <p>We handle these containers:
      * <ul>
-     *   <li>{@link InventoryID#EQUIPMENT} — syncs worn gear immediately</li>
+     *   <li>{@link InventoryID#EQUIPMENT} — worn gear, debounced {@value #EQUIPMENT_DEBOUNCE_SECONDS}s</li>
      *   <li>{@link InventoryID#BANK} — full bank re-sync (delete + insert) when opened</li>
      *   <li>{@link InventoryID#INVENTORY} — full inventory snapshot (when Sync Bank is on)</li>
+     *   <li>Looting bag and POH costume-room units — last-seen snapshot per container</li>
      * </ul>
      *
      * <p>Data is read here on the client thread, then handed to the executor for network I/O.
@@ -364,18 +412,24 @@ public class OsrsJournalPlugin extends Plugin
     @Subscribe
     public void onItemContainerChanged(ItemContainerChanged event)
     {
-        if (!config.syncEnabled() || currentRsn == null)
+        if (!config.syncEnabled())
+        {
+            return;
+        }
+
+        // Equipment often loads before performLoginSync assigns currentRsn.
+        // Resolve the name here so the first container event is not dropped.
+        final String rsn = loggedInRsn();
+        if (rsn == null)
         {
             return;
         }
 
         final int containerId = event.getContainerId();
-        final String rsn = currentRsn;
 
         if (containerId == InventoryID.EQUIPMENT.getId())
         {
-            List<Map<String, Object>> records = buildEquipmentRecords(rsn);
-            executor.execute(() -> syncEquipment(rsn, records));
+            scheduleEquipmentSync(rsn);
         }
         else if (containerId == InventoryID.BANK.getId() && config.syncBank())
         {
@@ -397,6 +451,22 @@ public class OsrsJournalPlugin extends Plugin
         else if (containerId == InventoryID.INVENTORY.getId() && config.syncBank())
         {
             scheduleInventorySync(rsn);
+        }
+        else if (config.syncBank() && ExtraItemStorage.isTracked(containerId))
+        {
+            // Closing the interface can unload the container — never treat that as empty.
+            ItemContainer extra = event.getItemContainer();
+            if (extra == null)
+            {
+                extra = client.getItemContainer(containerId);
+            }
+            if (extra == null)
+            {
+                return;
+            }
+            String key = ExtraItemStorage.keyFor(containerId);
+            pendingStashRecords.put(key, buildItemRecords(extra));
+            scheduleStashSync(rsn, key);
         }
     }
 
@@ -465,6 +535,7 @@ public class OsrsJournalPlugin extends Plugin
                 pairingService.clearState();
             }
             currentRsn = rsn;
+            captureSessionBaselineIfNeeded(rsn);
 
             // Always refresh the local sidebar; network only after Hub opt-in.
             if (!config.syncEnabled())
@@ -482,11 +553,22 @@ public class OsrsJournalPlugin extends Plugin
             List<Map<String, Object>> equipRecords  = buildEquipmentRecords(rsn);
             List<Map<String, Object>> diaryRecords  = buildDiaryRecords(rsn);
             List<Map<String, Object>> caRecords     = buildCombatAchievementRecords(rsn);
+            final List<Map<String, Object>> invRecords =
+                (config.syncBank() && client.getItemContainer(InventoryID.INVENTORY) != null)
+                    ? buildInventoryRecords()
+                    : null;
+            final List<Map<String, Object>> stashPages =
+                config.syncBank() ? buildLoadedStashPages() : Collections.emptyList();
 
             executor.execute(() ->
             {
                 HostedApiService.SyncResult result = journalSyncService.syncLogin(
-                    rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords);
+                    rsn, playerRecord, skillRecords, questRecords, equipRecords, diaryRecords, caRecords, invRecords);
+
+                if (!stashPages.isEmpty())
+                {
+                    journalSyncService.syncStashes(rsn, stashPages);
+                }
 
                 if (result.isSuccess() && !result.isClaimed())
                 {
@@ -583,6 +665,71 @@ public class OsrsJournalPlugin extends Plugin
         refreshPanel();
     }
 
+    /**
+     * RSN of the logged-in player, capturing it on the first readable tick so
+     * early {@link ItemContainerChanged} events are not ignored.
+     */
+    private String loggedInRsn()
+    {
+        if (currentRsn != null)
+        {
+            return currentRsn;
+        }
+        if (client.getGameState() != GameState.LOGGED_IN)
+        {
+            return null;
+        }
+        Player localPlayer = client.getLocalPlayer();
+        if (localPlayer == null)
+        {
+            return null;
+        }
+        String rsn = localPlayer.getName();
+        if (rsn == null || rsn.isEmpty())
+        {
+            return null;
+        }
+        currentRsn = rsn;
+        return rsn;
+    }
+
+    /** Push current inventory (and bank if the container is loaded) off-thread. */
+    private void snapshotBankAndInventory(String rsn)
+    {
+        clientThread.invokeLater(() ->
+        {
+            if (!config.syncEnabled() || !config.syncBank() || !rsn.equals(currentRsn)
+                || client.getGameState() != GameState.LOGGED_IN)
+            {
+                return;
+            }
+            ItemContainer invContainer = client.getItemContainer(InventoryID.INVENTORY);
+            ItemContainer bankContainer = client.getItemContainer(InventoryID.BANK);
+            if (invContainer == null && bankContainer == null)
+            {
+                return;
+            }
+            final List<Map<String, Object>> inv = invContainer != null ? buildInventoryRecords() : null;
+            final List<Map<String, Object>> bank = bankContainer != null ? buildBankRecords(rsn) : null;
+            executor.execute(() ->
+            {
+                if (bank != null && inv != null)
+                {
+                    journalSyncService.syncBankAndInventory(rsn, bank, inv);
+                }
+                else if (bank != null)
+                {
+                    journalSyncService.syncBank(rsn, bank);
+                }
+                else
+                {
+                    journalSyncService.syncInventory(rsn, inv);
+                }
+                refreshPanel();
+            });
+        });
+    }
+
     /** Debounce inventory pickups so we don't sync on every tick of a stack change. */
     private void scheduleInventorySync(String rsn)
     {
@@ -597,7 +744,78 @@ public class OsrsJournalPlugin extends Plugin
                 List<Map<String, Object>> inv = buildInventoryRecords();
                 executor.execute(() -> syncInventory(rsn, inv));
             }),
-            2, TimeUnit.SECONDS);
+            INVENTORY_DEBOUNCE_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** Debounce worn-gear swaps so raid/spec switches are one write. */
+    private void scheduleEquipmentSync(String rsn)
+    {
+        cancelEquipmentDebounce();
+        equipmentSyncFuture = executor.schedule(() ->
+            clientThread.invoke(() ->
+            {
+                if (!config.syncEnabled() || client.getGameState() != GameState.LOGGED_IN)
+                {
+                    return;
+                }
+                if (!rsn.equals(currentRsn) && !rsn.equals(loggedInRsn()))
+                {
+                    return;
+                }
+                List<Map<String, Object>> records = buildEquipmentRecords(rsn);
+                if (records != null)
+                {
+                    executor.execute(() -> syncEquipment(rsn, records));
+                }
+            }),
+            EQUIPMENT_DEBOUNCE_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** Push looting bag / POH containers that are currently loaded (do not wipe unloaded ones). */
+    private void snapshotLoadedStashes(String rsn)
+    {
+        clientThread.invokeLater(() ->
+        {
+            if (!config.syncEnabled() || !config.syncBank() || !rsn.equals(currentRsn)
+                || client.getGameState() != GameState.LOGGED_IN)
+            {
+                return;
+            }
+            List<Map<String, Object>> pages = buildLoadedStashPages();
+            if (pages.isEmpty())
+            {
+                return;
+            }
+            executor.execute(() ->
+            {
+                journalSyncService.syncStashes(rsn, pages);
+                refreshPanel();
+            });
+        });
+    }
+
+    private void scheduleStashSync(String rsn, String containerKey)
+    {
+        ScheduledFuture<?> prev = stashSyncFutures.remove(containerKey);
+        if (prev != null && !prev.isDone())
+        {
+            prev.cancel(false);
+        }
+        stashSyncFutures.put(containerKey, executor.schedule(() ->
+        {
+            List<Map<String, Object>> items = pendingStashRecords.remove(containerKey);
+            stashSyncFutures.remove(containerKey);
+            if (items == null || !config.syncEnabled() || !config.syncBank() || !rsn.equals(currentRsn))
+            {
+                return;
+            }
+            List<Map<String, Object>> pages = Collections.singletonList(ImmutableMap.of(
+                "container", containerKey,
+                "items", items
+            ));
+            journalSyncService.syncStashes(rsn, pages);
+            refreshPanel();
+        }, 2, TimeUnit.SECONDS));
     }
 
     private void scheduleProgressSync(String rsn)
@@ -765,8 +983,24 @@ public class OsrsJournalPlugin extends Plugin
     }
 
     /**
+     * Whether a diary tier varbit value means the tier's tasks are done.
+     * Karamja Easy/Medium/Hard use a legacy encoding (0 = not started,
+     * 1 = started, 2 = complete); every other tier uses 0 / 1.
+     */
+    static boolean isDiaryTierComplete(int varbitId, int value)
+    {
+        if (varbitId == Varbits.DIARY_KARAMJA_EASY
+            || varbitId == Varbits.DIARY_KARAMJA_MEDIUM
+            || varbitId == Varbits.DIARY_KARAMJA_HARD)
+        {
+            return value >= 2;
+        }
+        return value >= 1;
+    }
+
+    /**
      * Achievement diary tier completion from known varbits.
-     * Value {@code 1} means that region+tier is finished.
+     * See {@link #isDiaryTierComplete(int, int)} for value encoding.
      */
     private List<Map<String, Object>> buildDiaryRecords(String rsn)
     {
@@ -829,7 +1063,7 @@ public class OsrsJournalPlugin extends Plugin
                 "rsn", rsn,
                 "region", d[0],
                 "tier", d[1],
-                "complete", client.getVarbitValue(varbit) == 1
+                "complete", isDiaryTierComplete(varbit, client.getVarbitValue(varbit))
             ));
         }
         return records;
@@ -859,12 +1093,16 @@ public class OsrsJournalPlugin extends Plugin
         return records;
     }
 
+    /**
+     * {@code null} when the equipment container has not loaded yet — callers
+     * must not treat that as "player is naked" and replace cloud gear.
+     */
     private List<Map<String, Object>> buildEquipmentRecords(String rsn)
     {
         ItemContainer container = client.getItemContainer(InventoryID.EQUIPMENT);
         if (container == null)
         {
-            return new ArrayList<>();
+            return null;
         }
 
         List<Map<String, Object>> records = new ArrayList<>();
@@ -889,7 +1127,7 @@ public class OsrsJournalPlugin extends Plugin
             records.add(ImmutableMap.<String, Object>builder()
                 .put("rsn", rsn)
                 .put("slot_id", idx)
-                .put("slot_name", slot.name().toLowerCase())
+                .put("slot_name", canonicalSlotName(slot))
                 .put("item_id", itemId)
                 .put("item_name", itemName)
                 .put("quantity", item.getQuantity())
@@ -899,6 +1137,18 @@ public class OsrsJournalPlugin extends Plugin
         return records;
     }
 
+    /**
+     * Website {@code SLOT_ORDER} uses {@code neck}; RuneLite's enum is {@code AMULET}.
+     */
+    static String canonicalSlotName(EquipmentInventorySlot slot)
+    {
+        if (slot == EquipmentInventorySlot.AMULET)
+        {
+            return "neck";
+        }
+        return slot.name().toLowerCase();
+    }
+
     private List<Map<String, Object>> buildBankRecords(String rsn)
     {
         ItemContainer container = client.getItemContainer(InventoryID.BANK);
@@ -906,39 +1156,14 @@ public class OsrsJournalPlugin extends Plugin
         {
             return new ArrayList<>();
         }
-
-        // Canonicalize noted/placeholder IDs so journal icons & GE prices resolve.
-        // Merge stacks that collapse to the same canonical id (noted + unnoted).
-        Map<Integer, int[]> qtyById = new java.util.LinkedHashMap<>();
-        Map<Integer, String> nameById = new java.util.HashMap<>();
-        for (Item item : container.getItems())
-        {
-            // quantity <= 0 filters bank placeholders — no reason to sync those
-            if (item == null || item.getId() == -1 || item.getQuantity() <= 0)
-            {
-                continue;
-            }
-            int itemId = itemManager.canonicalize(item.getId());
-            int[] qty = qtyById.get(itemId);
-            if (qty == null)
-            {
-                qtyById.put(itemId, new int[]{item.getQuantity()});
-                nameById.put(itemId, resolveItemName(itemId));
-            }
-            else
-            {
-                qty[0] += item.getQuantity();
-            }
-        }
-
-        List<Map<String, Object>> records = new ArrayList<>(qtyById.size());
-        for (Map.Entry<Integer, int[]> e : qtyById.entrySet())
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (Map<String, Object> row : buildItemRecords(container))
         {
             records.add(ImmutableMap.of(
-                "rsn",       rsn,
-                "item_id",   e.getKey(),
-                "item_name", nameById.get(e.getKey()),
-                "quantity",  e.getValue()[0]
+                "rsn", rsn,
+                "item_id", row.get("item_id"),
+                "item_name", row.get("item_name"),
+                "quantity", row.get("quantity")
             ));
         }
         return records;
@@ -952,9 +1177,36 @@ public class OsrsJournalPlugin extends Plugin
         {
             return new ArrayList<>();
         }
+        return buildItemRecords(container);
+    }
 
+    /**
+     * Snapshots of extra storage currently loaded in the client. Unloaded
+     * containers are omitted so a previous cloud snapshot is not wiped.
+     */
+    private List<Map<String, Object>> buildLoadedStashPages()
+    {
+        List<Map<String, Object>> pages = new ArrayList<>();
+        for (int containerId : ExtraItemStorage.containerIds())
+        {
+            ItemContainer container = client.getItemContainer(containerId);
+            if (container == null)
+            {
+                continue;
+            }
+            pages.add(ImmutableMap.of(
+                "container", ExtraItemStorage.keyFor(containerId),
+                "items", buildItemRecords(container)
+            ));
+        }
+        return pages;
+    }
+
+    /** Canonicalized, merged stacks from any item container. */
+    private List<Map<String, Object>> buildItemRecords(ItemContainer container)
+    {
         Map<Integer, int[]> qtyById = new java.util.LinkedHashMap<>();
-        Map<Integer, String> nameById = new java.util.HashMap<>();
+        Map<Integer, String> nameById = new HashMap<>();
         for (Item item : container.getItems())
         {
             if (item == null || item.getId() == -1 || item.getQuantity() <= 0)
@@ -1026,6 +1278,57 @@ public class OsrsJournalPlugin extends Plugin
         }
     }
 
+    private void schedulePanelRefresh()
+    {
+        cancelPanelRefresh();
+        panelRefreshFuture = executor.schedule(this::refreshPanel, 1, TimeUnit.SECONDS);
+    }
+
+    private void cancelPanelRefresh()
+    {
+        if (panelRefreshFuture != null && !panelRefreshFuture.isDone())
+        {
+            panelRefreshFuture.cancel(false);
+            panelRefreshFuture = null;
+        }
+    }
+
+    private void captureSessionBaselineIfNeeded(String rsn)
+    {
+        if (rsn.equals(sessionBaselineRsn) && !sessionStartXp.isEmpty())
+        {
+            return;
+        }
+        sessionBaselineRsn = rsn;
+        sessionStartXp.clear();
+        sessionStartLevel.clear();
+        for (Skill skill : Skill.values())
+        {
+            if (skill == Skill.OVERALL)
+            {
+                continue;
+            }
+            sessionStartXp.put(skill, client.getSkillExperience(skill));
+            sessionStartLevel.put(skill, client.getRealSkillLevel(skill));
+        }
+    }
+
+    private void clearSessionBaseline()
+    {
+        sessionBaselineRsn = null;
+        sessionStartXp.clear();
+        sessionStartLevel.clear();
+    }
+
+    private void cancelEquipmentDebounce()
+    {
+        if (equipmentSyncFuture != null && !equipmentSyncFuture.isDone())
+        {
+            equipmentSyncFuture.cancel(false);
+            equipmentSyncFuture = null;
+        }
+    }
+
     private void cancelInventoryDebounce()
     {
         if (inventorySyncFuture != null && !inventorySyncFuture.isDone())
@@ -1051,6 +1354,19 @@ public class OsrsJournalPlugin extends Plugin
             collectionLogSyncFuture.cancel(false);
             collectionLogSyncFuture = null;
         }
+    }
+
+    private void cancelStashDebounce()
+    {
+        for (ScheduledFuture<?> future : stashSyncFutures.values())
+        {
+            if (future != null && !future.isDone())
+            {
+                future.cancel(false);
+            }
+        }
+        stashSyncFutures.clear();
+        pendingStashRecords.clear();
     }
 
     /**
@@ -1125,7 +1441,9 @@ public class OsrsJournalPlugin extends Plugin
                     config.syncBank(),
                     config.publicProfile(),
                     pairing,
-                    journalSyncService.getLastStatus()
+                    journalSyncService.getLastStatus(),
+                    sessionStartXp,
+                    sessionStartLevel
                 );
             }
             final JournalSnapshot captured = snapshot;

@@ -24,7 +24,7 @@ import net.runelite.client.ui.PluginPanel;
  * <p>Renders from {@link JournalSnapshot} view-models only — all game-state reads
  * happen on the client thread before a snapshot reaches this class, and all
  * methods here are EDT-only except where noted. The body is a single HTML
- * {@link JEditorPane} because the layout (pair code, skill table, quest list)
+ * {@link JEditorPane} because the layout (pair code, session XP, quest list)
  * is easier to keep readable as markup than as nested Swing containers.
  */
 class OsrsJournalPanel extends PluginPanel
@@ -217,8 +217,8 @@ class OsrsJournalPanel extends PluginPanel
         if (s == null)
         {
             return htmlWrap(
-                "<p style='color:#94a3b8'>Your stats, quests, and sync status appear here while logged in.</p>"
-                    + "<p style='color:#64748b'>Use <b>Open full journal</b> for the complete planner UI in your browser.</p>"
+                "<p style='color:#94a3b8'>Session XP, quests to continue, and sync status show up here while logged in.</p>"
+                    + "<p style='color:#64748b'>Use <b>Open full journal</b> for upgrades, diaries, and the full planner.</p>"
             );
         }
 
@@ -321,35 +321,64 @@ class OsrsJournalPanel extends PluginPanel
         }
 
         sb.append("<hr/>");
-        sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Skills</b></p>");
-        sb.append("<table width='100%' cellpadding='2' cellspacing='0'>");
-        for (JournalSnapshot.SkillRow row : s.getSkills())
+        sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>This session</b></p>");
+        if (s.getSessionXpGained() <= 0 && s.getSessionLevelsGained() <= 0)
         {
-            sb.append("<tr><td style='color:#cbd5e1'>").append(escape(row.getLabel()))
-                .append("</td><td align='right' style='color:#f1f5f9'>")
-                .append(row.getLevel()).append("</td></tr>");
+            sb.append("<p style='color:#64748b;font-size:11px'>No XP yet — train something and it shows up here.</p>");
         }
-        sb.append("</table>");
+        else
+        {
+            sb.append("<p style='color:#f1f5f9;font-size:12px'><b>+")
+                .append(JournalSnapshot.formatXp(s.getSessionXpGained()))
+                .append(" XP</b>");
+            if (s.getSessionLevelsGained() > 0)
+            {
+                sb.append(" · ").append(s.getSessionLevelsGained())
+                    .append(s.getSessionLevelsGained() == 1 ? " level" : " levels");
+            }
+            sb.append("</p>");
+            sb.append("<table width='100%' cellpadding='2' cellspacing='0'>");
+            for (JournalSnapshot.SkillDelta row : s.getSessionSkills())
+            {
+                sb.append("<tr><td style='color:#cbd5e1'>").append(escape(row.getLabel()));
+                if (row.getLevelsGained() > 0)
+                {
+                    sb.append(" <span style='color:#22c55e'>+").append(row.getLevelsGained()).append("</span>");
+                }
+                sb.append("</td><td align='right' style='color:#f1f5f9'>+")
+                    .append(JournalSnapshot.formatXp(row.getXpGained()))
+                    .append("</td></tr>");
+            }
+            sb.append("</table>");
+        }
+
         sb.append("<hr/>");
-        sb.append("<p style='color:#94a3b8'>Quests finished: <span style='color:#f1f5f9'>")
-            .append(s.getQuestsFinished()).append("</span></p>");
-        if (s.getCollectionCountMax() > 0)
+        sb.append("<p style='color:#94a3b8;margin-bottom:4px'><b>Quests</b></p>");
+        sb.append("<p style='color:#f1f5f9;font-size:12px'>")
+            .append(s.getQuestsFinished()).append(" / ").append(s.getQuestsTotal())
+            .append(" finished</p>");
+        if (!s.getContinueQuests().isEmpty())
         {
-            sb.append("<p style='color:#94a3b8'>Collection log: <span style='color:#f1f5f9'>")
-                .append(s.getCollectionCount()).append(" / ").append(s.getCollectionCountMax())
-                .append("</span></p>");
-        }
-        if (!s.getRecentQuests().isEmpty())
-        {
-            sb.append("<p style='color:#64748b;margin-bottom:4px'>In progress / recent:</p><ul style='margin-top:0;padding-left:16px'>");
-            for (String quest : s.getRecentQuests())
+            sb.append("<p style='color:#64748b;margin-bottom:4px'>Continue:</p>")
+                .append("<ul style='margin-top:0;padding-left:16px'>");
+            for (String quest : s.getContinueQuests())
             {
                 sb.append("<li style='color:#cbd5e1;font-size:11px'>").append(escape(quest)).append("</li>");
             }
             sb.append("</ul>");
         }
-        sb.append("<p style='color:#64748b;font-size:11px'>Diaries, combat achievements, gear, collection log "
-            + "(open pages in-game to sync items &amp; kill counts), and export live in the browser journal.</p>");
+        else
+        {
+            sb.append("<p style='color:#64748b;font-size:11px'>No quests in progress — the journal lists what you can start.</p>");
+        }
+        if (s.getCollectionCountMax() > 0)
+        {
+            sb.append("<hr/>");
+            sb.append("<p style='color:#94a3b8'>Collection log: <span style='color:#f1f5f9'>")
+                .append(s.getCollectionCount()).append(" / ").append(s.getCollectionCountMax())
+                .append("</span></p>");
+        }
+        sb.append("<p style='color:#64748b;font-size:11px'>Upgrades, diaries, collection log, and a full plan live in the browser.</p>");
         return htmlWrap(sb.toString());
     }
 
