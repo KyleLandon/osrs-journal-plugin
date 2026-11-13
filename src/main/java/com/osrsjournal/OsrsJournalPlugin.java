@@ -955,8 +955,24 @@ public class OsrsJournalPlugin extends Plugin
     }
 
     /**
+     * Whether a diary tier varbit value means the tier's tasks are done.
+     * Karamja Easy/Medium/Hard use a legacy encoding (0 = not started,
+     * 1 = started, 2 = complete); every other tier uses 0 / 1.
+     */
+    static boolean isDiaryTierComplete(int varbitId, int value)
+    {
+        if (varbitId == Varbits.DIARY_KARAMJA_EASY
+            || varbitId == Varbits.DIARY_KARAMJA_MEDIUM
+            || varbitId == Varbits.DIARY_KARAMJA_HARD)
+        {
+            return value >= 2;
+        }
+        return value >= 1;
+    }
+
+    /**
      * Achievement diary tier completion from known varbits.
-     * Value {@code 1} means that region+tier is finished.
+     * See {@link #isDiaryTierComplete(int, int)} for value encoding.
      */
     private List<Map<String, Object>> buildDiaryRecords(String rsn)
     {
@@ -1019,7 +1035,7 @@ public class OsrsJournalPlugin extends Plugin
                 "rsn", rsn,
                 "region", d[0],
                 "tier", d[1],
-                "complete", client.getVarbitValue(varbit) == 1
+                "complete", isDiaryTierComplete(varbit, client.getVarbitValue(varbit))
             ));
         }
         return records;
