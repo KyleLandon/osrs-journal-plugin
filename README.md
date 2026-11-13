@@ -71,9 +71,9 @@ row-level security keeps private data (bank, gear) readable only by you.
 
 ## Sidebar panel
 
-While logged in, the panel shows your combat level, quest points, skill levels,
-quests in progress, sync status, and bank sync on/off — plus the pairing code until your account
-is linked.
+While logged in, the panel shows combat/QP/total, XP and levels gained this session
+(top skills), quests you can continue, sync status, and bank sync on/off — plus the
+pairing code until your account is linked.
 
 ## Support
 

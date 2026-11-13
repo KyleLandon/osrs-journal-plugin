@@ -6,3 +6,6 @@ out/
 
 # Local JDK path — machine-specific
 gradle.properties
+
+# Supabase CLI local state
+supabase/.temp/

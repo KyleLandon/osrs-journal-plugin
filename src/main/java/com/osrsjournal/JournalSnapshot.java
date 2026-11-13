@@ -1,7 +1,11 @@
 package com.osrsjournal;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import lombok.Getter;
 import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
@@ -17,13 +21,19 @@ import net.runelite.api.Skill;
 @Getter
 class JournalSnapshot
 {
+    private static final int TOP_SESSION_SKILLS = 3;
+    private static final int MAX_CONTINUE_QUESTS = 5;
+
     private final String rsn;
     private final int combatLevel;
     private final int questPoints;
     private final int totalLevel;
     private final int questsFinished;
-    private final List<SkillRow> skills;
-    private final List<String> recentQuests;
+    private final int questsTotal;
+    private final List<String> continueQuests;
+    private final long sessionXpGained;
+    private final int sessionLevelsGained;
+    private final List<SkillDelta> sessionSkills;
     private final boolean syncEnabled;
     private final boolean bankSyncEnabled;
     private final boolean publicProfileEnabled;
@@ -39,8 +49,11 @@ class JournalSnapshot
         int questPoints,
         int totalLevel,
         int questsFinished,
-        List<SkillRow> skills,
-        List<String> recentQuests,
+        int questsTotal,
+        List<String> continueQuests,
+        long sessionXpGained,
+        int sessionLevelsGained,
+        List<SkillDelta> sessionSkills,
         boolean syncEnabled,
         boolean bankSyncEnabled,
         boolean publicProfileEnabled,
@@ -56,8 +69,11 @@ class JournalSnapshot
         this.questPoints = questPoints;
         this.totalLevel = totalLevel;
         this.questsFinished = questsFinished;
-        this.skills = skills;
-        this.recentQuests = recentQuests;
+        this.questsTotal = questsTotal;
+        this.continueQuests = continueQuests;
+        this.sessionXpGained = sessionXpGained;
+        this.sessionLevelsGained = sessionLevelsGained;
+        this.sessionSkills = sessionSkills;
         this.syncEnabled = syncEnabled;
         this.bankSyncEnabled = bankSyncEnabled;
         this.publicProfileEnabled = publicProfileEnabled;
@@ -112,25 +128,18 @@ class JournalSnapshot
         return bankSyncEnabled && !syncEnabled;
     }
 
-    static class SkillRow
+    @Getter
+    static class SkillDelta
     {
         private final String label;
-        private final int level;
+        private final int xpGained;
+        private final int levelsGained;
 
-        SkillRow(String label, int level)
+        SkillDelta(String label, int xpGained, int levelsGained)
         {
             this.label = label;
-            this.level = level;
-        }
-
-        String getLabel()
-        {
-            return label;
-        }
-
-        int getLevel()
-        {
-            return level;
+            this.xpGained = xpGained;
+            this.levelsGained = levelsGained;
         }
     }
 
@@ -140,7 +149,9 @@ class JournalSnapshot
         boolean bankSyncEnabled,
         boolean publicProfileEnabled,
         PairingState pairing,
-        JournalSyncService.SyncStatus syncStatus
+        JournalSyncService.SyncStatus syncStatus,
+        Map<Skill, Integer> sessionStartXp,
+        Map<Skill, Integer> sessionStartLevel
     )
     {
         var player = client.getLocalPlayer();
@@ -149,28 +160,33 @@ class JournalSnapshot
         int qp = client.getVarpValue(net.runelite.api.VarPlayer.QUEST_POINTS);
         int total = client.getTotalLevel();
 
-        List<SkillRow> skills = new ArrayList<>();
-        addSkill(skills, client, Skill.ATTACK);
-        addSkill(skills, client, Skill.STRENGTH);
-        addSkill(skills, client, Skill.DEFENCE);
-        addSkill(skills, client, Skill.RANGED);
-        addSkill(skills, client, Skill.MAGIC);
-        addSkill(skills, client, Skill.PRAYER);
-        addSkill(skills, client, Skill.HITPOINTS);
-        addSkill(skills, client, Skill.SLAYER);
+        EnumMap<Skill, Integer> nowXp = new EnumMap<>(Skill.class);
+        EnumMap<Skill, Integer> nowLevel = new EnumMap<>(Skill.class);
+        for (Skill skill : Skill.values())
+        {
+            if (skill == Skill.OVERALL)
+            {
+                continue;
+            }
+            nowXp.put(skill, client.getSkillExperience(skill));
+            nowLevel.put(skill, client.getRealSkillLevel(skill));
+        }
+        SessionProgress session = sessionProgress(sessionStartXp, sessionStartLevel, nowXp, nowLevel);
 
         int finished = 0;
-        List<String> recent = new ArrayList<>();
+        int questTotal = 0;
+        List<String> continueQuests = new ArrayList<>();
         for (Quest quest : Quest.values())
         {
+            questTotal++;
             QuestState state = quest.getState(client);
             if (state == QuestState.FINISHED)
             {
                 finished++;
             }
-            else if (state == QuestState.IN_PROGRESS && recent.size() < 6)
+            else if (state == QuestState.IN_PROGRESS && continueQuests.size() < MAX_CONTINUE_QUESTS)
             {
-                recent.add(quest.getName());
+                continueQuests.add(quest.getName());
             }
         }
 
@@ -185,8 +201,11 @@ class JournalSnapshot
             qp,
             total,
             finished,
-            skills,
-            recent,
+            questTotal,
+            continueQuests,
+            session.xpGained,
+            session.levelsGained,
+            session.topSkills,
             syncEnabled,
             bankSyncEnabled,
             publicProfileEnabled,
@@ -198,17 +217,82 @@ class JournalSnapshot
         );
     }
 
-    private static void addSkill(List<SkillRow> skills, net.runelite.api.Client client, Skill skill)
+    static SessionProgress sessionProgress(
+        Map<Skill, Integer> startXp,
+        Map<Skill, Integer> startLevel,
+        Map<Skill, Integer> nowXp,
+        Map<Skill, Integer> nowLevel
+    )
     {
-        skills.add(new SkillRow(capitalize(skill.getName()), client.getRealSkillLevel(skill)));
+        if (startXp == null || startXp.isEmpty() || nowXp == null || nowXp.isEmpty())
+        {
+            return new SessionProgress(0, 0, Collections.emptyList());
+        }
+        long xpGained = 0;
+        int levelsGained = 0;
+        List<SkillDelta> deltas = new ArrayList<>();
+        for (Skill skill : Skill.values())
+        {
+            if (skill == Skill.OVERALL)
+            {
+                continue;
+            }
+            int start = startXp.getOrDefault(skill, nowXp.getOrDefault(skill, 0));
+            int now = nowXp.getOrDefault(skill, start);
+            int gain = Math.max(0, now - start);
+            int startLv = startLevel != null
+                ? startLevel.getOrDefault(skill, nowLevel.getOrDefault(skill, 1))
+                : nowLevel.getOrDefault(skill, 1);
+            int nowLv = nowLevel != null ? nowLevel.getOrDefault(skill, startLv) : startLv;
+            int levels = Math.max(0, nowLv - startLv);
+            xpGained += gain;
+            levelsGained += levels;
+            if (gain > 0 || levels > 0)
+            {
+                deltas.add(new SkillDelta(capitalize(skill.getName()), gain, levels));
+            }
+        }
+        deltas.sort(Comparator.comparingInt(SkillDelta::getXpGained).reversed());
+        if (deltas.size() > TOP_SESSION_SKILLS)
+        {
+            deltas = new ArrayList<>(deltas.subList(0, TOP_SESSION_SKILLS));
+        }
+        return new SessionProgress(xpGained, levelsGained, deltas);
     }
 
-    private static String capitalize(String name)
+    static String formatXp(long xp)
+    {
+        if (xp >= 1_000_000)
+        {
+            return String.format("%.2fm", xp / 1_000_000.0);
+        }
+        if (xp >= 1_000)
+        {
+            return String.format("%.1fk", xp / 1000.0);
+        }
+        return String.valueOf(xp);
+    }
+
+    static String capitalize(String name)
     {
         if (name == null || name.isEmpty())
         {
             return name;
         }
         return Character.toUpperCase(name.charAt(0)) + name.substring(1).toLowerCase();
+    }
+
+    static final class SessionProgress
+    {
+        final long xpGained;
+        final int levelsGained;
+        final List<SkillDelta> topSkills;
+
+        SessionProgress(long xpGained, int levelsGained, List<SkillDelta> topSkills)
+        {
+            this.xpGained = xpGained;
+            this.levelsGained = levelsGained;
+            this.topSkills = topSkills;
+        }
     }
 }

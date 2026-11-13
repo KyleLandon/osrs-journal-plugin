@@ -133,6 +133,14 @@ public class OsrsJournalPlugin extends Plugin
     /** Debounce handle for skill sync — cancelled/rescheduled on every {@link StatChanged}. */
     private ScheduledFuture<?> skillSyncFuture;
 
+    /** Debounce handle for sidebar redraw while XP is coming in. */
+    private ScheduledFuture<?> panelRefreshFuture;
+
+    /** XP/level at login (or character switch) for the sidebar session recap. */
+    private String sessionBaselineRsn;
+    private final EnumMap<Skill, Integer> sessionStartXp = new EnumMap<>(Skill.class);
+    private final EnumMap<Skill, Integer> sessionStartLevel = new EnumMap<>(Skill.class);
+
     /** Debounce handle for worn-gear sync after {@link InventoryID#EQUIPMENT} changes. */
     private ScheduledFuture<?> equipmentSyncFuture;
 
@@ -209,12 +217,14 @@ public class OsrsJournalPlugin extends Plugin
         collectionLogCapture.setOnPagesChanged(null);
         collectionLogCapture.drainPages();
         cancelSkillDebounce();
+        cancelPanelRefresh();
         cancelEquipmentDebounce();
         cancelInventoryDebounce();
         cancelProgressDebounce();
         cancelCollectionLogDebounce();
         cancelStashDebounce();
         lastQuestStates.clear();
+        clearSessionBaseline();
         currentRsn = null;
         openedSidebarOnce = false;
         clientToolbar.removeNavigation(navButton);
@@ -252,12 +262,15 @@ public class OsrsJournalPlugin extends Plugin
                 executor.schedule(this::performLoginSync, 2, TimeUnit.SECONDS);
                 break;
             case LOGIN_SCREEN:
+                clearSessionBaseline();
+                // fall through
             case HOPPING:
                 currentRsn = null;
                 lastQuestStates.clear();
                 pairingService.clearState();
                 openedSidebarOnce = false; // next character can get the pairing sidebar
                 cancelSkillDebounce();
+                cancelPanelRefresh();
                 cancelEquipmentDebounce();
                 cancelInventoryDebounce();
                 cancelProgressDebounce();
@@ -355,6 +368,13 @@ public class OsrsJournalPlugin extends Plugin
     @Subscribe
     public void onStatChanged(StatChanged event)
     {
+        if (client.getGameState() != GameState.LOGGED_IN)
+        {
+            return;
+        }
+
+        schedulePanelRefresh();
+
         if (!config.syncEnabled() || currentRsn == null)
         {
             return;
@@ -514,6 +534,7 @@ public class OsrsJournalPlugin extends Plugin
                 pairingService.clearState();
             }
             currentRsn = rsn;
+            captureSessionBaselineIfNeeded(rsn);
 
             // Always refresh the local sidebar; network only after Hub opt-in.
             if (!config.syncEnabled())
@@ -1213,6 +1234,48 @@ public class OsrsJournalPlugin extends Plugin
         }
     }
 
+    private void schedulePanelRefresh()
+    {
+        cancelPanelRefresh();
+        panelRefreshFuture = executor.schedule(this::refreshPanel, 1, TimeUnit.SECONDS);
+    }
+
+    private void cancelPanelRefresh()
+    {
+        if (panelRefreshFuture != null && !panelRefreshFuture.isDone())
+        {
+            panelRefreshFuture.cancel(false);
+            panelRefreshFuture = null;
+        }
+    }
+
+    private void captureSessionBaselineIfNeeded(String rsn)
+    {
+        if (rsn.equals(sessionBaselineRsn) && !sessionStartXp.isEmpty())
+        {
+            return;
+        }
+        sessionBaselineRsn = rsn;
+        sessionStartXp.clear();
+        sessionStartLevel.clear();
+        for (Skill skill : Skill.values())
+        {
+            if (skill == Skill.OVERALL)
+            {
+                continue;
+            }
+            sessionStartXp.put(skill, client.getSkillExperience(skill));
+            sessionStartLevel.put(skill, client.getRealSkillLevel(skill));
+        }
+    }
+
+    private void clearSessionBaseline()
+    {
+        sessionBaselineRsn = null;
+        sessionStartXp.clear();
+        sessionStartLevel.clear();
+    }
+
     private void cancelEquipmentDebounce()
     {
         if (equipmentSyncFuture != null && !equipmentSyncFuture.isDone())
@@ -1334,7 +1397,9 @@ public class OsrsJournalPlugin extends Plugin
                     config.syncBank(),
                     config.publicProfile(),
                     pairing,
-                    journalSyncService.getLastStatus()
+                    journalSyncService.getLastStatus(),
+                    sessionStartXp,
+                    sessionStartLevel
                 );
             }
             final JournalSnapshot captured = snapshot;
